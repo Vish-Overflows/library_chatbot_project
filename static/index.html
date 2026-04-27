@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GyanAI | IITGN Library Assistant</title>
+    <link rel="stylesheet" href="/static/styles.css?v=20260428-official-ui" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">IIT Gandhinagar Library</p>
+          <h1>GyanAI</h1>
+        </div>
+        <div class="status-strip" aria-label="Knowledge sources">
+          <span>FAQs</span>
+          <span>E-journals</span>
+          <span>Repository</span>
+        </div>
+      </header>
+
+      <section class="workspace">
+        <aside class="side-panel" aria-label="Suggested questions">
+          <div class="panel-block">
+            <h2>Ask About</h2>
+            <button type="button" class="prompt-chip" data-prompt="Do we have access to ACM Computing Surveys?">Journal access</button>
+            <button type="button" class="prompt-chip" data-prompt="What are the library hours?">Library hours</button>
+            <button type="button" class="prompt-chip" data-prompt="Find IITGN publications on explainable AI">IITGN publications</button>
+            <button type="button" class="prompt-chip" data-prompt="How can I borrow books using an RFID kiosk?">Borrowing books</button>
+            <button type="button" class="prompt-chip" data-prompt="Are food and beverages allowed in the Library?">Library rules</button>
+          </div>
+
+          <div class="panel-block metrics">
+            <h2>Knowledge Base</h2>
+            <dl>
+              <div>
+                <dt>FAQ entries</dt>
+                <dd>141</dd>
+              </div>
+              <div>
+                <dt>E-journal records</dt>
+                <dd>18,493</dd>
+              </div>
+              <div>
+                <dt>Repository records</dt>
+                <dd>12,428</dd>
+              </div>
+            </dl>
+          </div>
+        </aside>
+
+        <section class="chat-panel" aria-label="Chat">
+          <div class="chat-header">
+            <div>
+              <h2>Library Assistant</h2>
+              <p>Answers are generated from retrieved IITGN Library evidence.</p>
+            </div>
+            <span id="mode-indicator">Ready</span>
+          </div>
+
+          <div id="messages" class="messages" aria-live="polite">
+            <article class="message assistant">
+              <p class="message-text">Hello. Ask me about library policies, e-journal access, repository publications, theses, or available resources.</p>
+            </article>
+          </div>
+
+          <form id="chat-form" class="composer">
+            <label class="sr-only" for="message-input">Your question</label>
+            <textarea id="message-input" rows="2" placeholder="Ask a library question"></textarea>
+            <button id="send-button" type="submit">Send</button>
+          </form>
+
+          <section id="feedback-panel" class="feedback-panel hidden">
+            <p>Was this answer helpful?</p>
+            <div class="feedback-actions">
+              <button type="button" class="feedback-button" data-helpful="true">Helpful</button>
+              <button type="button" class="feedback-button secondary" data-helpful="false">Needs work</button>
+            </div>
+          </section>
+        </section>
+      </section>
+    </main>
+
+    <template id="message-template">
+      <article class="message">
+        <p class="message-text"></p>
+        <div class="source-list hidden"></div>
+        <div class="related hidden">
+          <p class="related-label">Related questions</p>
+          <div class="related-list"></div>
+        </div>
+      </article>
+    </template>
+
+    <template id="source-template">
+      <a class="source-card" target="_blank" rel="noreferrer">
+        <span class="source-type"></span>
+        <strong class="source-title"></strong>
+        <span class="source-meta"></span>
+      </a>
+    </template>
+
+    <script src="/static/app.js?v=20260428-official-ui"></script>
+  </body>
+</html>

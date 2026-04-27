@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>IITGN Library Chatbot Progress Report</title>
+  <style>
+    body { margin: 0; font-family: Arial, Helvetica, sans-serif; background: #f6f8fb; color: #17202a; }
+    main { max-width: 1080px; margin: 0 auto; padding: 32px 20px 56px; }
+    header { margin-bottom: 24px; }
+    h1 { margin: 0 0 8px; font-size: 34px; }
+    h2 { margin: 0 0 14px; font-size: 22px; }
+    h3 { margin: 0 0 8px; font-size: 16px; }
+    p { line-height: 1.55; }
+    section { background: white; border: 1px solid #dbe3ec; border-radius: 10px; padding: 20px; margin-top: 18px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; border-bottom: 1px solid #e8eef5; padding: 10px 8px; vertical-align: top; }
+    th { color: #4d5b6a; font-size: 13px; text-transform: uppercase; }
+    ul { margin: 0; padding-left: 20px; }
+    li { margin: 8px 0; line-height: 1.5; }
+    .muted { color: #607080; font-size: 13px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; background: transparent; border: 0; padding: 0; }
+    .grid article, .contribution, .example { background: white; border: 1px solid #dbe3ec; border-radius: 10px; padding: 16px; }
+    .grid span { display: block; color: #607080; font-size: 13px; margin-bottom: 8px; }
+    .grid strong { font-size: 28px; }
+    .contributions { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+    .contribution p, .example p { margin: 0 0 8px; }
+    .badge { display: inline-block; background: #e8f4ef; color: #0b604b; border: 1px solid #bcded2; border-radius: 999px; padding: 5px 10px; font-size: 13px; }
+    @media print { body { background: white; } section, .grid article, .contribution, .example { break-inside: avoid; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <span class="badge">Generated 2026-04-27 18:28:38</span>
+      <h1>IITGN Library Chatbot Progress Report</h1>
+      <p class="muted">Database: instance/chatbot.db</p>
+      <p>This report summarizes the current deployable chatbot work, usage logs from the SQLite backend, and the concrete improvements made above the original baseline prototype.</p>
+    </header>
+
+    
+      <section class="grid">
+        <article><span>Total chat messages</span><strong>33</strong></article>
+        <article><span>Unique sessions</span><strong>18</strong></article>
+        <article><span>Messages in last 7 days</span><strong>33</strong></article>
+        <article><span>Average retrieval confidence</span><strong>0.79</strong></article>
+        <article><span>Feedback entries</span><strong>0</strong></article>
+        <article><span>Helpful rate</span><strong>0.0%</strong></article>
+      </section>
+    
+    
+      <section>
+        <h2>Contributions Above The Baseline Project</h2>
+        <div class="contributions">
+        <article class="contribution">
+          <h3>Deployable FastAPI backend</h3>
+          <p>Moved the project from a local Streamlit prototype toward a production-style HTTP API with /api/chat, /api/feedback, /api/health, CORS support, Docker support, and a standalone static web client.</p>
+        </article>
+        
+
+        <article class="contribution">
+          <h3>OpenAI-compatible LLM integration</h3>
+          <p>Added a provider-neutral chat completions client configured for Groq, with model/config driven by environment variables instead of hardcoded secrets.</p>
+        </article>
+        
+
+        <article class="contribution">
+          <h3>Grounded answer generation</h3>
+          <p>The LLM receives retrieved IITGN Library context and is instructed to answer only from supplied evidence, reducing hallucinated policies, timings, links, and staff details.</p>
+        </article>
+        
+
+        <article class="contribution">
+          <h3>Metadata-ready knowledge layer</h3>
+          <p>Reworked FAQs and catalog rows into a common KnowledgeDocument model so tomorrow&#x27;s real book/library metadata file can replace sample data without rewriting chatbot logic.</p>
+        </article>
+        
+
+        <article class="contribution">
+          <h3>Catalog search preparation</h3>
+          <p>Added support for catalog CSV fields such as title, author, ISBN, subject, call number, location, availability, description, and source URL with common column aliases.</p>
+        </article>
+        
+
+        <article class="contribution">
+          <h3>Persistent chat and feedback logging</h3>
+          <p>Replaced loose CSV logging with SQLite tables for chat messages and user feedback, enabling more reliable analytics and reporting.</p>
+        </article>
+        
+
+        <article class="contribution">
+          <h3>Automated tests</h3>
+          <p>Added tests for FAQ retrieval, contextual follow-up handling, catalog title search, ISBN lookup, and grounded catalog responses.</p>
+        </article>
+        
+
+        <article class="contribution">
+          <h3>Deployment readiness</h3>
+          <p>Prepared environment-based configuration, Docker startup, local demo flow, and README instructions for cloud or institute-server deployment.</p>
+        </article>
+        </div>
+      </section>
+    
+    
+      <section>
+        <h2>Response Modes</h2>
+        <table>
+          <thead><tr><th>Mode</th><th>Count</th><th>Share</th></tr></thead>
+          <tbody><tr><td>retrieval</td><td>26</td><td>78.8%</td></tr>
+<tr><td>llm</td><td>5</td><td>15.2%</td></tr>
+<tr><td>contextual_retrieval</td><td>2</td><td>6.1%</td></tr></tbody>
+        </table>
+      </section>
+    
+    
+      <section>
+        <h2>Top User Questions</h2>
+        <table>
+          <tbody><tr><td>Where is the library located?</td><td>4</td></tr>
+<tr><td>Can I take phone calls in the library?</td><td>3</td></tr>
+<tr><td>What are the library hours?</td><td>2</td></tr>
+<tr><td>Can I talk loudly in the library?</td><td>2</td></tr>
+<tr><td>Can I bring food?</td><td>2</td></tr>
+<tr><td>Can I bring water?</td><td>2</td></tr>
+<tr><td>How can I borrow books using an RFID kiosk?</td><td>2</td></tr>
+<tr><td>How do I request a book chapter using Interlibrary Loan (ILL)?</td><td>2</td></tr>
+<tr><td>Is Deep Learning available?</td><td>2</td></tr>
+<tr><td>Can I leave my laptop overnight?</td><td>1</td></tr></tbody>
+        </table>
+      </section>
+    
+    
+      <section>
+        <h2>Top Source URLs</h2>
+        <table>
+          <tbody><tr><td>https://library.iitgn.ac.in/faqs.php</td><td>31</td></tr>
+<tr><td>https://catalog.iitgn.ac.in/</td><td>2</td></tr></tbody>
+        </table>
+      </section>
+    
+    
+      <section>
+        <h2>Recent Chat Examples</h2>
+        
+        <article class="example">
+          <p><b>User:</b> Can I take phone calls in the library?</p>
+          <p><b>Assistant:</b> As a quiet-study guideline for this demo, users should avoid phone calls inside the library and step outside if they need to speak on the phone. Audible phone use inside the library is discouraged.</p>
+          <p class="muted">Mode: retrieval | Confidence: 1.00 | Source: https://library.iitgn.ac.in/faqs.php</p>
+        </article>
+        
+
+        <article class="example">
+          <p><b>User:</b> what about that on weekends?</p>
+          <p><b>Assistant:</b> As a quiet-study guideline for this demo, users should avoid phone calls inside the library and step outside if they need to speak on the phone. Audible phone use inside the library is discouraged.</p>
+          <p class="muted">Mode: contextual_retrieval | Confidence: 0.68 | Source: https://library.iitgn.ac.in/faqs.php</p>
+        </article>
+        
+
+        <article class="example">
+          <p><b>User:</b> Is Deep Learning available?</p>
+          <p><b>Assistant:</b> Title: Deep Learning
+Author(s): Ian Goodfellow; Yoshua Bengio; Aaron Courville
+ISBN: 9780262035613
+Subject(s): Machine Learning; Neural Networks; Artificial Intelligence
+Call number: Q325.5 G66
+Location: Main Library - AI and Data Science shelves
+Availability: Checked out
+Description: Reference book on deep learning methods neural networks and representation learning</p>
+          <p class="muted">Mode: retrieval | Confidence: 0.68 | Source: https://catalog.iitgn.ac.in/</p>
+        </article>
+        
+
+        <article class="example">
+          <p><b>User:</b> Is Deep Learning available?</p>
+          <p><b>Assistant:</b> The book &quot;Deep Learning&quot; by Ian Goodfellow, Yoshua Bengio, and Aaron Courville is currently checked out and not available at the Main Library - AI and Data Science shelves. You may want to check the library catalog or contact the library for more information on its availability or to request a hold. Additionally, you can explore the library&#x27;s digital resources to see if an e-version of the book is available.</p>
+          <p class="muted">Mode: llm | Confidence: 0.68 | Source: https://catalog.iitgn.ac.in/</p>
+        </article>
+        
+
+        <article class="example">
+          <p><b>User:</b> when is the library open on weekends</p>
+          <p><b>Assistant:</b> I couldn&#x27;t find a reliable answer to your question about the library&#x27;s weekend hours. For the most accurate and up-to-date information, I recommend contacting librarian@iitgn.ac.in.</p>
+          <p class="muted">Mode: llm | Confidence: 0.66 | Source: https://library.iitgn.ac.in/faqs.php</p>
+        </article>
+        
+
+        <article class="example">
+          <p><b>User:</b> How do I request a book chapter using Interlibrary Loan (ILL)?</p>
+          <p><b>Assistant:</b> For book chapters, write to libraryservices@iitgn.ac.in.</p>
+          <p class="muted">Mode: llm | Confidence: 1.00 | Source: https://library.iitgn.ac.in/faqs.php</p>
+        </article>
+        
+
+        <article class="example">
+          <p><b>User:</b> What is book reserve?</p>
+          <p><b>Assistant:</b> Book reserve allows members to reserve materials that are already issued at the Circulation Desk. You can reserve a maximum of two books at any given time, and a book can have a maximum of two reservations. When the book is returned, it will be put on hold at the Circulation Desk for up to two working days, and you will be informed of its availability via email. If you fail to pick up the reserved book within this period, the reservation will be cancelled.</p>
+          <p class="muted">Mode: llm | Confidence: 0.78 | Source: https://library.iitgn.ac.in/faqs.php</p>
+        </article>
+        
+
+        <article class="example">
+          <p><b>User:</b> Where is the library located?</p>
+          <p><b>Assistant:</b> The Library is located in Main Library, Block 13, and there is a mini library extension located in Emiet Hostel.</p>
+          <p class="muted">Mode: llm | Confidence: 0.67 | Source: https://library.iitgn.ac.in/faqs.php</p>
+        </article>
+        
+      </section>
+    
+    
+      <section>
+        <h2>Remaining Work Before Final Submission</h2>
+        <ul><li>Replace data/sample_catalog.csv with the official IITGN Library metadata export.</li>
+<li>Tune the parser after inspecting the real metadata columns and data quality.</li>
+<li>Add persistent semantic or hybrid retrieval for large-scale natural-language catalog search.</li>
+<li>Improve citation display in the web UI so users can inspect source records directly.</li>
+<li>Create an evaluation set of real student questions for answer quality and hallucination checks.</li>
+<li>Deploy to a public/staging URL and store API keys as server environment variables.</li></ul>
+      </section>
+    
+  </main>
+</body>
+</html>
