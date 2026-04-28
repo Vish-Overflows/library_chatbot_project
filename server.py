@@ -56,6 +56,18 @@ app.add_middleware(
 )
 
 
+def _static_dir() -> Path:
+    configured_dir = Path(settings.static_dir)
+    fallback_dir = Path(__file__).resolve().parent / "static"
+    if (configured_dir / "index.html").exists():
+        return configured_dir
+    return fallback_dir
+
+
+STATIC_DIR = _static_dir()
+INDEX_PATH = STATIC_DIR / "index.html"
+
+
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=2000)
     session_id: str | None = Field(default=None, max_length=100)
@@ -98,6 +110,19 @@ def healthcheck() -> dict[str, object]:
     }
 
 
+@app.get("/api/static-health")
+def static_healthcheck() -> dict[str, object]:
+    configured_dir = Path(settings.static_dir)
+    fallback_dir = Path(__file__).resolve().parent / "static"
+    return {
+        "configured_static_dir": str(configured_dir),
+        "configured_index_exists": (configured_dir / "index.html").exists(),
+        "served_static_dir": str(STATIC_DIR),
+        "served_index_exists": INDEX_PATH.exists(),
+        "static_files": sorted(path.name for path in STATIC_DIR.glob("*") if path.is_file()),
+    }
+
+
 @app.post("/api/chat", response_model=ChatResponse)
 def chat(request: ChatRequest) -> ChatResponse:
     try:
@@ -132,9 +157,14 @@ def feedback(request: FeedbackRequest) -> dict[str, str]:
 
 
 @app.get("/")
+@app.get("/app")
 def index() -> FileResponse:
-    return FileResponse(settings.static_dir / "index.html")
+    if not INDEX_PATH.exists():
+        raise HTTPException(
+            status_code=500,
+            detail=f"UI entrypoint not found at {INDEX_PATH}",
+        )
+    return FileResponse(INDEX_PATH)
 
 
-static_dir = Path(settings.static_dir)
-app.mount("/static", StaticFiles(directory=static_dir), name="static")
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
