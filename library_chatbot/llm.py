@@ -54,6 +54,7 @@ class OpenAICompatibleClient:
         payload = {
             "model": self.model,
             "temperature": 0.1,
+            "max_tokens": 700,
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {

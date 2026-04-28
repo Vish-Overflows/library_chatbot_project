@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
+from functools import lru_cache
+import heapq
 import csv
 import math
 import re
@@ -195,6 +197,7 @@ class KnowledgeBase:
     def __init__(self, documents: list[KnowledgeDocument]) -> None:
         self.documents = documents
         self.entries = documents
+        self._token_index = self._build_token_index(documents)
 
     @classmethod
     def from_csv(cls, csv_path: str | Path) -> "KnowledgeBase":
@@ -294,11 +297,36 @@ class KnowledgeBase:
 
         return documents
 
+    @staticmethod
+    def _build_token_index(documents: list[KnowledgeDocument]) -> dict[str, tuple[int, ...]]:
+        token_index: dict[str, set[int]] = defaultdict(set)
+        for index, document in enumerate(documents):
+            for token in set(document.title_tokens) | set(document.body_tokens):
+                token_index[token].add(index)
+        return {
+            token: tuple(sorted(document_indices))
+            for token, document_indices in token_index.items()
+        }
+
     def search(self, query: str, limit: int = 4) -> list[SearchResult]:
-        query_tokens = Counter(tokenize(query))
-        scored_results: list[SearchResult] = []
         normalized_query = normalize_text(query)
-        for document in self.documents:
+        return list(self._search_cached(normalized_query, limit))
+
+    @lru_cache(maxsize=512)
+    def _search_cached(self, normalized_query: str, limit: int) -> tuple[SearchResult, ...]:
+        query_tokens = Counter(tokenize(normalized_query))
+        scored_results: list[SearchResult] = []
+        if not query_tokens:
+            return ()
+
+        candidate_indices: set[int] = set()
+        for token in query_tokens:
+            candidate_indices.update(self._token_index.get(token, ()))
+        if not candidate_indices:
+            return ()
+
+        for index in candidate_indices:
+            document = self.documents[index]
             title_score = cosine_similarity(query_tokens, document.title_tokens)
             body_score = cosine_similarity(query_tokens, document.body_tokens)
             score = (0.65 * title_score) + (0.35 * body_score)
@@ -332,8 +360,8 @@ class KnowledgeBase:
                 )
             )
 
-        scored_results.sort(key=lambda result: result.score, reverse=True)
-        return _deduplicate_results(scored_results)[:limit]
+        top_results = heapq.nlargest(max(limit * 4, limit), scored_results, key=lambda result: result.score)
+        return tuple(_deduplicate_results(top_results)[:limit])
 
     def related_questions(self, query: str, limit: int = 3) -> list[str]:
         normalized_query = normalize_text(query)
