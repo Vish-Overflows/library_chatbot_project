@@ -6,8 +6,29 @@ import unittest
 from pathlib import Path
 
 from library_chatbot.knowledge_base import KnowledgeBase
+from library_chatbot.catalog import CatalogRecord, CatalogSearchResult
+from library_chatbot.llm import LLMAnswer
 from library_chatbot.service import ChatService
 from library_chatbot.storage import ChatStorage
+
+
+class RecordingLLM:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def answer(self, **_: object) -> LLMAnswer:
+        self.calls += 1
+        return LLMAnswer(text="Generated from grounded evidence.", used_model="test-model")
+
+
+class FakeCatalogClient:
+    def __init__(self, result: CatalogSearchResult) -> None:
+        self.result = result
+        self.queries: list[str] = []
+
+    def search(self, query: str) -> CatalogSearchResult:
+        self.queries.append(query)
+        return self.result
 
 
 class ChatServiceTests(unittest.TestCase):
@@ -80,6 +101,65 @@ class ChatServiceTests(unittest.TestCase):
         result = self.service.answer("Is Deep Learning available?")
         self.assertIn("Checked out", result.answer)
         self.assertIn("AI and Data Science shelves", result.answer)
+
+    def test_moderate_confidence_match_uses_grounded_generation(self) -> None:
+        llm = RecordingLLM()
+        self.service.llm_client = llm
+        result = self.service.answer("available learning")
+        self.assertEqual(result.response_mode, "llm")
+        self.assertEqual(result.answer, "Generated from grounded evidence.")
+        self.assertEqual(llm.calls, 1)
+
+    def test_high_confidence_match_can_use_grounded_generation(self) -> None:
+        llm = RecordingLLM()
+        self.service.llm_client = llm
+        result = self.service.answer("9780262035613")
+        self.assertEqual(result.response_mode, "llm")
+        self.assertEqual(result.answer, "Generated from grounded evidence.")
+        self.assertEqual(llm.calls, 1)
+
+    def test_unknown_catalog_question_redirects_to_catalog(self) -> None:
+        result = self.service.answer("Is the parking handbook book available?")
+        self.assertEqual(result.response_mode, "fallback")
+        self.assertEqual(result.source_url, "https://catalog.iitgn.ac.in/")
+        self.assertIn("Relevant source", result.answer)
+
+    def test_live_catalog_search_answers_book_availability(self) -> None:
+        catalog_result = CatalogSearchResult(
+            query="sipser",
+            search_url="https://catalog.iitgn.ac.in/cgi-bin/koha/opac-search.pl?q=sipser",
+            records=[
+                CatalogRecord(
+                    title="Introduction to the theory of computation",
+                    authors="Sipser, Michael",
+                    call_number="004.0151 SIP",
+                    status="Available",
+                    item_type="Books",
+                    source_url="https://catalog.iitgn.ac.in/cgi-bin/koha/opac-detail.pl?biblionumber=1",
+                    confidence=0.9,
+                )
+            ],
+        )
+        fake_catalog = FakeCatalogClient(catalog_result)
+        self.service.catalog_client = fake_catalog
+        result = self.service.answer("is sipser in the library?")
+        self.assertEqual(result.response_mode, "live_catalog")
+        self.assertIn("Introduction to the theory of computation", result.answer)
+        self.assertIn("Available", result.answer)
+        self.assertEqual(result.sources[0].source_type, "live_catalog")
+        self.assertEqual(fake_catalog.queries, ["sipser"])
+
+    def test_live_catalog_uncertain_result_redirects_to_catalog_search(self) -> None:
+        catalog_result = CatalogSearchResult(
+            query="spaceship manual",
+            search_url="https://catalog.iitgn.ac.in/cgi-bin/koha/opac-search.pl?q=spaceship+manual",
+            records=[],
+        )
+        self.service.catalog_client = FakeCatalogClient(catalog_result)
+        result = self.service.answer("do you have spaceship manual?")
+        self.assertEqual(result.response_mode, "catalog_redirect")
+        self.assertEqual(result.source_url, catalog_result.search_url)
+        self.assertIn("search the catalogue directly", result.answer)
 
 
 if __name__ == "__main__":

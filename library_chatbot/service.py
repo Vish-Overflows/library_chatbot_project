@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import re
 from uuid import uuid4
 
+from library_chatbot.catalog import CatalogRecord, KohaCatalogClient
 from library_chatbot.knowledge_base import KnowledgeBase, SearchResult
 from library_chatbot.llm import OpenAICompatibleClient
 from library_chatbot.storage import ChatStorage, ChatTurn, StoredMessage
@@ -16,9 +17,25 @@ GREETING_RESPONSES = {
 }
 
 FALLBACK_ANSWER = (
-    "I could not find a reliable answer in the current library knowledge base. "
-    "Please try rephrasing your question or contact the library at librarian@iitgn.ac.in."
+    "I could not verify a direct answer from the current library knowledge base."
 )
+LOW_CONFIDENCE_NOTICE = (
+    "I found a possible library source, but the match is not strong enough for a generated answer. "
+    "Please verify it from the source below or contact librarian@iitgn.ac.in."
+)
+LIBRARY_REDIRECTS = {
+    "general": "https://library.iitgn.ac.in/",
+    "catalog": "https://catalog.iitgn.ac.in/",
+    "faq": "https://library.iitgn.ac.in/faqs.php",
+    "repository_publication": "https://repository.iitgn.ac.in/",
+    "digital_resources": "https://library.iitgn.ac.in/e_resource_publisherwise.php",
+    "off_campus": "https://library.iitgn.ac.in/off-campus-access.php",
+    "ill": "https://library.iitgn.ac.in/ill.php",
+    "contact": "https://library.iitgn.ac.in/contact.php",
+}
+GENERATION_CONFIDENCE_MINIMUM = 0.30
+SOURCE_REDIRECT_MINIMUM = 0.28
+CITATION_CONFIDENCE_MINIMUM = 0.28
 FOLLOW_UP_HINTS = {
     "also",
     "and",
@@ -47,6 +64,48 @@ FOLLOW_UP_HINTS = {
     "fees",
 }
 REFERENTIAL_PATTERN = re.compile(r"\b(it|they|them|that|this|there|those|these|also)\b", re.IGNORECASE)
+PHONE_CALL_PATTERN = re.compile(r"\b(phone\s+call|call\s+someone|take\s+calls?|make\s+calls?|talk\s+on\s+phone)\b", re.IGNORECASE)
+BORROWING_PATTERN = re.compile(r"\b(borrow|borrowing|loan|loans|issue|issuing|renew|renewal|rfid)\b", re.IGNORECASE)
+SERVICE_INTENT_PATTERN = re.compile(
+    r"\b("
+    r"service|services|help|contact|email|article copy|document delivery|dds|ill|inter library|"
+    r"off[- ]campus|remote|remotexs|vpn|purchase|recommend|acquisition|turnitin|grammarly|"
+    r"similarity|research support"
+    r")\b",
+    re.IGNORECASE,
+)
+CATALOG_INTENT_PATTERN = re.compile(
+    r"\b("
+    r"catalog|catalogue|book|books|title|author|authors|isbn|call\s+number|"
+    r"do\s+you\s+have|is\s+.+\s+in\s+the\s+library|available|find\s+.+\s+book|"
+    r"find\s+.+\s+library|sipser|cormen"
+    r")\b",
+    re.IGNORECASE,
+)
+POLICY_INTENT_PATTERN = re.compile(
+    r"\b(policy|borrow|borrowing|loan|loans|renew|renewal|rfid|issue|return|fine|fee|hours|timing|rule|rules)\b",
+    re.IGNORECASE,
+)
+CATALOG_QUERY_STOPWORDS = {
+    "a",
+    "an",
+    "available",
+    "book",
+    "books",
+    "catalog",
+    "catalogue",
+    "do",
+    "find",
+    "have",
+    "in",
+    "is",
+    "library",
+    "me",
+    "please",
+    "the",
+    "there",
+    "you",
+}
 
 
 @dataclass(frozen=True)
@@ -78,6 +137,7 @@ class ChatService:
         top_k: int,
         conversation_history_limit: int,
         llm_client: OpenAICompatibleClient | None = None,
+        catalog_client: KohaCatalogClient | None = None,
     ) -> None:
         self.knowledge_base = knowledge_base
         self.storage = storage
@@ -85,6 +145,7 @@ class ChatService:
         self.top_k = top_k
         self.conversation_history_limit = conversation_history_limit
         self.llm_client = llm_client
+        self.catalog_client = catalog_client
 
     def answer(self, message: str, session_id: str | None = None) -> ChatResult:
         clean_message = " ".join(message.split())
@@ -107,8 +168,17 @@ class ChatService:
             self._store(session, clean_message, result)
             return result
 
-        effective_query = self._rewrite_with_context(clean_message, recent_turns)
-        search_results = self.knowledge_base.search(effective_query, limit=self.top_k)
+        contextual_query = self._rewrite_with_context(clean_message, recent_turns)
+        used_conversation_context = contextual_query != clean_message
+        effective_query = self._expand_query(contextual_query)
+
+        if self._should_search_live_catalog(clean_message):
+            catalog_result = self._answer_from_live_catalog(clean_message, session)
+            if catalog_result is not None:
+                return catalog_result
+
+        search_limit = max(self.top_k, 6)
+        search_results = self.knowledge_base.search(effective_query, limit=search_limit)
         if not search_results or search_results[0].score < self.similarity_threshold:
             if effective_query != clean_message:
                 direct_results = self.knowledge_base.search(clean_message, limit=self.top_k)
@@ -118,9 +188,9 @@ class ChatService:
 
             result = ChatResult(
                 session_id=session,
-                answer=FALLBACK_ANSWER,
-                source_url="https://library.iitgn.ac.in/",
-                sources=self._source_citations(search_results),
+                answer=self._fallback_answer(clean_message, search_results),
+                source_url=self._redirect_url(clean_message, search_results),
+                sources=self._source_citations(self._reliable_sources(search_results)),
                 related_questions=self.knowledge_base.related_questions(effective_query, limit=3),
                 response_mode="fallback",
                 confidence=search_results[0].score if search_results else 0.0,
@@ -129,14 +199,34 @@ class ChatService:
             return result
 
         top_result = search_results[0]
-        answer_text, response_mode = self._compose_answer(clean_message, effective_query, search_results, recent_turns)
-        if effective_query != clean_message and response_mode == "retrieval":
+        if top_result.score < SOURCE_REDIRECT_MINIMUM:
+            result = ChatResult(
+                session_id=session,
+                answer=self._fallback_answer(clean_message, search_results),
+                source_url=self._redirect_url(clean_message, search_results),
+                sources=self._source_citations(self._reliable_sources(search_results)),
+                related_questions=self.knowledge_base.related_questions(effective_query, limit=3),
+                response_mode="fallback",
+                confidence=top_result.score,
+            )
+            self._store(session, clean_message, result)
+            return result
+
+        allow_generation = top_result.score >= GENERATION_CONFIDENCE_MINIMUM
+        answer_text, response_mode = self._compose_answer(
+            clean_message,
+            effective_query,
+            search_results,
+            recent_turns,
+            allow_generation=allow_generation,
+        )
+        if used_conversation_context and response_mode == "retrieval":
             response_mode = "contextual_retrieval"
         result = ChatResult(
             session_id=session,
             answer=answer_text,
             source_url=top_result.source,
-            sources=self._source_citations(search_results),
+            sources=self._answer_citations(search_results),
             related_questions=self.knowledge_base.related_questions(effective_query, limit=3),
             response_mode=response_mode,
             confidence=top_result.score,
@@ -150,10 +240,11 @@ class ChatService:
         effective_query: str,
         search_results: list[SearchResult],
         recent_turns: list[ChatTurn],
+        allow_generation: bool,
     ) -> tuple[str, str]:
         top_result = search_results[0]
-        if self.llm_client is None:
-            return top_result.answer, "retrieval"
+        if self.llm_client is None or not allow_generation:
+            return self._compose_retrieval_answer(search_results), "retrieval"
 
         context_blocks = [
             self._format_context_block(result)
@@ -173,9 +264,270 @@ class ChatService:
         except RuntimeError:
             return top_result.answer, "retrieval"
 
+    def _fallback_answer(self, message: str, search_results: list[SearchResult]) -> str:
+        redirect_url = self._redirect_url(message, search_results)
+        contact = self._contact_for_message(message)
+        nearby = ""
+        reliable_sources = self._reliable_sources(search_results)
+        if reliable_sources:
+            nearby_titles = ", ".join(result.title for result in reliable_sources[:3])
+            nearby = f"\n\nClosest related library sources I found: {nearby_titles}."
+        return (
+            f"{FALLBACK_ANSWER} "
+            "The safest next step is to check the relevant library source or contact the right library team."
+            f"{nearby}\n\n"
+            f"Relevant source: {redirect_url}\n"
+            f"Contact: {contact}"
+        )
+
+    def _uncertain_answer(self, top_result: SearchResult) -> str:
+        source_url = top_result.source or LIBRARY_REDIRECTS["general"]
+        return (
+            f"{LOW_CONFIDENCE_NOTICE}\n\n"
+            f"Possible match: {top_result.title}\n"
+            f"Source: {source_url}"
+        )
+
+    def _redirect_url(self, message: str, search_results: list[SearchResult]) -> str:
+        if search_results and search_results[0].score >= SOURCE_REDIRECT_MINIMUM and search_results[0].source:
+            return search_results[0].source
+
+        lowered = message.lower()
+        if any(token in lowered for token in ("catalog", "book", "isbn", "borrow", "available", "availability")):
+            if any(token in lowered for token in ("borrow", "loan", "renew", "rfid", "issue")):
+                return LIBRARY_REDIRECTS["faq"]
+            return LIBRARY_REDIRECTS["catalog"]
+        if any(token in lowered for token in ("remote", "off-campus", "off campus", "vpn", "remotexs")):
+            return LIBRARY_REDIRECTS["off_campus"]
+        if any(token in lowered for token in ("journal", "e-resource", "eresource", "database", "article", "paper access")):
+            return LIBRARY_REDIRECTS["digital_resources"]
+        if any(token in lowered for token in ("ill", "inter library", "interlibrary", "document delivery", "dds")):
+            return LIBRARY_REDIRECTS["ill"]
+        if any(token in lowered for token in ("contact", "email", "staff", "help")):
+            return LIBRARY_REDIRECTS["contact"]
+        if any(token in lowered for token in ("paper", "publication", "repository", "thesis", "doi", "author")):
+            return LIBRARY_REDIRECTS["repository_publication"]
+        if any(token in lowered for token in ("rule", "policy", "hours", "timing", "fine", "fee")):
+            return LIBRARY_REDIRECTS["faq"]
+        return LIBRARY_REDIRECTS["general"]
+
+    def _contact_for_message(self, message: str) -> str:
+        lowered = message.lower()
+        if any(token in lowered for token in ("borrow", "loan", "return", "renew", "fine", "overdue", "circulation", "card", "rfid")):
+            return "librarycirculation@iitgn.ac.in"
+        if any(token in lowered for token in ("purchase", "recommend", "procurement", "acquisition", "subscribe", "book request")):
+            return "libraryacquisitions@iitgn.ac.in"
+        if any(token in lowered for token in ("remote", "off-campus", "off campus", "remotexs", "vpn", "article", "dds", "ill", "research", "turnitin", "grammarly")):
+            return "libraryservices@iitgn.ac.in"
+        return "librarian@iitgn.ac.in"
+
+    def _compose_retrieval_answer(self, search_results: list[SearchResult]) -> str:
+        top_result = search_results[0]
+        if top_result.source_type == "library_website":
+            lines = [self._website_answer(top_result)]
+            related = [
+                result
+                for result in search_results[1:4]
+                if result.score >= CITATION_CONFIDENCE_MINIMUM
+                and result.source_type in {"library_website", "faq"}
+                and result.title != top_result.title
+            ]
+            if related:
+                lines.append("")
+                lines.append("Related library sources:")
+                for result in related:
+                    lines.append(f"- {result.title}: {result.source}")
+            return "\n".join(lines)
+
+        if top_result.source_type in {"ejournal", "repository_publication", "catalog"}:
+            return top_result.answer
+
+        lines = [top_result.answer.strip()]
+        related = [
+            result
+            for result in search_results[1:4]
+            if result.score >= CITATION_CONFIDENCE_MINIMUM and result.title != top_result.title
+        ]
+        if related:
+            lines.append("")
+            lines.append("Related library options:")
+            for result in related:
+                lines.append(f"- {result.title}: {result.source}")
+        if top_result.source:
+            lines.append("")
+            lines.append(f"Source: {top_result.source}")
+        return "\n".join(line for line in lines if line is not None)
+
+    def _website_answer(self, result: SearchResult) -> str:
+        match = re.search(r"Description:\s*(.*)", result.content, re.IGNORECASE | re.DOTALL)
+        if match:
+            answer = match.group(1).strip()
+            answer = re.split(
+                r"\n(?:Source|Availability|Subject|Collection|Type):",
+                answer,
+                maxsplit=1,
+            )[0].strip()
+        else:
+            answer = re.sub(r"^Title:\s*.*?\n", "", result.content, flags=re.IGNORECASE).strip()
+        if result.source:
+            answer = f"{answer}\n\nSource: {result.source}"
+        return answer
+
+    def _should_search_live_catalog(self, message: str) -> bool:
+        if self.catalog_client is None:
+            return False
+        if SERVICE_INTENT_PATTERN.search(message):
+            return False
+        if POLICY_INTENT_PATTERN.search(message) and not re.search(
+            r"\b(do you have|is .+ in the library|find|isbn|author|title|catalog|catalogue)\b",
+            message,
+            re.IGNORECASE,
+        ):
+            return False
+        return CATALOG_INTENT_PATTERN.search(message) is not None
+
+    def _answer_from_live_catalog(self, message: str, session_id: str) -> ChatResult | None:
+        if self.catalog_client is None:
+            return None
+
+        catalog_query = self._catalog_query_from_message(message)
+        if not catalog_query:
+            return None
+
+        result = self.catalog_client.search(catalog_query)
+        if result.error:
+            chat_result = ChatResult(
+                session_id=session_id,
+                answer=(
+                    "I could not reach the live catalogue just now. "
+                    f"You can search it directly here: {result.search_url}"
+                ),
+                source_url=result.search_url,
+                sources=[],
+                related_questions=[],
+                response_mode="catalog_redirect",
+                confidence=0.0,
+            )
+            self._store(session_id, message, chat_result)
+            return chat_result
+
+        confident_records = [
+            record
+            for record in result.records
+            if record.confidence >= 0.45
+        ]
+        if not confident_records:
+            if result.found:
+                answer = (
+                    "I found possible catalogue matches, but not a confident enough match to answer directly. "
+                    f"Please check the catalogue results here: {result.search_url}"
+                )
+                confidence = result.records[0].confidence
+                sources = self._catalog_citations(result.records[:3])
+            else:
+                answer = (
+                    f"I could not find a confident catalogue match for \"{catalog_query}\". "
+                    f"Please search the catalogue directly here: {result.search_url}"
+                )
+                confidence = 0.0
+                sources = []
+            chat_result = ChatResult(
+                session_id=session_id,
+                answer=answer,
+                source_url=result.search_url,
+                sources=sources,
+                related_questions=[],
+                response_mode="catalog_redirect",
+                confidence=confidence,
+            )
+            self._store(session_id, message, chat_result)
+            return chat_result
+
+        answer = self._catalog_answer(catalog_query, confident_records)
+        chat_result = ChatResult(
+            session_id=session_id,
+            answer=answer,
+            source_url=confident_records[0].source_url,
+            sources=self._catalog_citations(confident_records),
+            related_questions=[],
+            response_mode="live_catalog",
+            confidence=confident_records[0].confidence,
+        )
+        self._store(session_id, message, chat_result)
+        return chat_result
+
+    def _catalog_query_from_message(self, message: str) -> str:
+        normalized = " ".join(message.strip().split())
+        quoted = re.findall(r'"([^"]+)"|\'([^\']+)\'', normalized)
+        if quoted:
+            return next((left or right for left, right in quoted if left or right), "").strip()
+
+        cleaned = re.sub(r"\b(do you have|can you find|find|is|are|there|any|available|in the library|library|catalogue|catalog)\b", " ", normalized, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\b(book|books|copy|copies|title|by|about|called|named)\b", " ", cleaned, flags=re.IGNORECASE)
+        tokens = [
+            token
+            for token in re.findall(r"[a-zA-Z0-9][a-zA-Z0-9.'-]*", cleaned)
+            if token.lower() not in CATALOG_QUERY_STOPWORDS
+        ]
+        return " ".join(tokens).strip() or normalized
+
+    def _catalog_answer(self, query: str, records: list[CatalogRecord]) -> str:
+        top = records[0]
+        availability = top.status or "status not shown"
+        answer_lines = [
+            f"Yes, I found a catalogue match for \"{query}\": {top.title}.",
+        ]
+        if top.authors:
+            answer_lines.append(f"Author(s): {top.authors}.")
+        if top.call_number:
+            answer_lines.append(f"Call number: {top.call_number}.")
+        if top.item_type:
+            answer_lines.append(f"Item type: {top.item_type}.")
+        answer_lines.append(f"Status: {availability}.")
+        if top.due_date:
+            answer_lines.append(f"Due date: {top.due_date}.")
+        answer_lines.append(f"Catalogue record: {top.source_url}")
+        if len(records) > 1:
+            answer_lines.append("I also found related catalogue records in the sources below.")
+        return "\n".join(answer_lines)
+
+    def _catalog_citations(self, records: list[CatalogRecord]) -> list[SourceCitation]:
+        citations: list[SourceCitation] = []
+        for record in records[:5]:
+            citations.append(
+                SourceCitation(
+                    title=record.title,
+                    source_type="live_catalog",
+                    source_url=record.source_url,
+                    confidence=record.confidence,
+                    metadata={
+                        key: value
+                        for key, value in {
+                            "authors": record.authors,
+                            "isbn": record.isbn,
+                            "call_number": record.call_number,
+                            "availability": record.status,
+                            "date": record.due_date,
+                            "resource_type": record.item_type,
+                        }.items()
+                        if value
+                    },
+                )
+            )
+        return citations
+
+    def _reliable_sources(self, search_results: list[SearchResult]) -> list[SearchResult]:
+        return [
+            result
+            for result in search_results
+            if result.score >= SOURCE_REDIRECT_MINIMUM
+        ]
+
     def _source_citations(self, search_results: list[SearchResult]) -> list[SourceCitation]:
         citations: list[SourceCitation] = []
         for result in search_results[:5]:
+            if result.score < CITATION_CONFIDENCE_MINIMUM:
+                continue
             citations.append(
                 SourceCitation(
                     title=result.title,
@@ -204,12 +556,34 @@ class ChatService:
             )
         return citations
 
+    def _answer_citations(self, search_results: list[SearchResult]) -> list[SourceCitation]:
+        if not search_results:
+            return []
+        top_source_type = search_results[0].source_type
+        if top_source_type == "library_website":
+            filtered = [
+                result
+                for result in search_results
+                if result.source_type in {"library_website", "faq"}
+            ]
+            return self._source_citations(filtered)
+        if top_source_type == "faq":
+            filtered = [
+                result
+                for result in search_results
+                if result.source_type in {"faq", "library_website"}
+            ]
+            return self._source_citations(filtered)
+        return self._source_citations(search_results)
+
     def _format_context_block(self, result: SearchResult) -> str:
         source_label = {
             "faq": "IITGN Library FAQ/policy",
             "catalog": "Library catalog/resource metadata",
             "ejournal": "E-journal/e-resource access metadata",
             "repository_publication": "IITGN repository publication metadata",
+            "library_website": "IITGN Library website/service page",
+            "live_catalog": "Live Koha catalogue result",
         }.get(result.source_type, result.source_type)
         metadata_lines = [
             f"{key.replace('_', ' ').title()}: {value}"
@@ -241,6 +615,36 @@ class ChatService:
 
         previous_user_message = recent_turns[-1].user_message
         return f"{previous_user_message} {message}".strip()
+
+    def _expand_query(self, message: str) -> str:
+        lowered = message.lower()
+        if "call number" not in lowered and PHONE_CALL_PATTERN.search(message):
+            return f"{message} take phone calls phone quiet"
+        if BORROWING_PATTERN.search(message):
+            return (
+                f"{message} borrow books loan record short loan renew RFID kiosk "
+                "circulation issue library borrowing policy"
+            )
+        if SERVICE_INTENT_PATTERN.search(message):
+            if any(token in lowered for token in ("purchase", "recommend", "acquisition", "procurement")):
+                return (
+                    f"{message} recommend resources purchase subscription books journals "
+                    "libraryacquisitions librarian purchase suggestion KOHA"
+                )
+            if any(token in lowered for token in ("article copy", "document delivery", "dds", "not available")):
+                return (
+                    f"{message} document delivery service DDS article copy unavailable "
+                    "bibliographic details libraryservices"
+                )
+            if any(token in lowered for token in ("off-campus", "off campus", "remote", "remotexs", "vpn")):
+                return f"{message} off-campus access RemoteXS VPN e-resources libraryservices"
+            if any(token in lowered for token in ("turnitin", "similarity", "grammarly", "research support")):
+                return f"{message} research support Turnitin similarity checking Grammarly libraryservices"
+            return (
+                f"{message} library services overview help contact circulation borrowing "
+                "off-campus access ILL research support Turnitin Grammarly purchase recommendation"
+            )
+        return message
 
     def _store(self, session_id: str, user_message: str, result: ChatResult) -> None:
         self.storage.log_message(

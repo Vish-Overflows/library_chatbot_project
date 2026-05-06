@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from library_chatbot.config import get_settings
+from library_chatbot.catalog import KohaCatalogClient
 from library_chatbot.knowledge_base import KnowledgeBase
 from library_chatbot.llm import OpenAICompatibleClient
 from library_chatbot.service import ChatService
@@ -25,6 +26,12 @@ knowledge_base = KnowledgeBase.from_sources(
     catalog_paths=settings.catalog_paths,
 )
 storage = ChatStorage(settings.database_path)
+catalog_client = None
+if settings.catalog_live_search_enabled:
+    catalog_client = KohaCatalogClient(
+        base_url=settings.catalog_base_url,
+        timeout_seconds=settings.catalog_timeout_seconds,
+    )
 llm_client = None
 if settings.llm_api_key:
     llm_client = OpenAICompatibleClient(
@@ -41,6 +48,7 @@ chat_service = ChatService(
     top_k=settings.top_k,
     conversation_history_limit=settings.conversation_history_limit,
     llm_client=llm_client,
+    catalog_client=catalog_client,
 )
 
 app = FastAPI(title=settings.app_name)
@@ -105,6 +113,8 @@ def healthcheck() -> dict[str, object]:
         "knowledge_documents": len(knowledge_base.documents),
         "knowledge_sources": dict(source_counts),
         "catalog_sources": [str(path) for path in settings.catalog_paths],
+        "live_catalog_enabled": catalog_client is not None,
+        "live_catalog_base_url": settings.catalog_base_url,
         "llm_enabled": llm_client is not None,
         "storage": storage.stats(),
     }
@@ -165,6 +175,17 @@ def index() -> FileResponse:
             detail=f"UI entrypoint not found at {INDEX_PATH}",
         )
     return FileResponse(INDEX_PATH)
+
+
+@app.get("/widget-demo")
+def widget_demo() -> FileResponse:
+    demo_path = STATIC_DIR / "widget-demo.html"
+    if not demo_path.exists():
+        raise HTTPException(
+            status_code=500,
+            detail=f"Widget demo not found at {demo_path}",
+        )
+    return FileResponse(demo_path)
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

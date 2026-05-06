@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>IITGN Library | GyanAI Widget Demo</title>
+    <style>
+      :root {
+        --blue: #12395b;
+        --blue-dark: #0d2e4b;
+        --green: #006b54;
+        --gold: #c48a2c;
+        --page: #f3f6f8;
+        --surface: #ffffff;
+        --line: #dce5ec;
+        --ink: #17212b;
+        --muted: #617080;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: var(--page);
+        color: var(--ink);
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      .utility {
+        min-height: 38px;
+        padding: 8px clamp(18px, 4vw, 48px);
+        background: var(--blue-dark);
+        color: #dcebf5;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 18px;
+        font-size: 13px;
+      }
+
+      .utility span {
+        white-space: nowrap;
+      }
+
+      .navbar {
+        padding: 16px clamp(18px, 4vw, 48px);
+        background: var(--surface);
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 22px;
+        position: sticky;
+        top: 0;
+        z-index: 20;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .brand-mark {
+        width: 46px;
+        height: 46px;
+        border-radius: 50%;
+        background: var(--blue);
+        color: white;
+        display: grid;
+        place-items: center;
+        font-weight: 900;
+        box-shadow: inset 0 -4px 0 rgba(255, 255, 255, 0.12);
+      }
+
+      .brand h1 {
+        margin: 0;
+        color: var(--blue);
+        font-size: 24px;
+        letter-spacing: 0;
+      }
+
+      .brand p {
+        margin: 2px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .navlinks {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        color: var(--blue);
+        font-weight: 800;
+        font-size: 14px;
+      }
+
+      .hero {
+        background:
+          linear-gradient(120deg, rgba(18, 57, 91, 0.92), rgba(0, 107, 84, 0.78)),
+          url("https://library.iitgn.ac.in/assets/images/banner/library.jpg");
+        background-size: cover;
+        background-position: center;
+        color: white;
+      }
+
+      .hero-inner {
+        width: min(1180px, 100%);
+        margin: 0 auto;
+        padding: 46px clamp(18px, 4vw, 38px) 34px;
+        display: grid;
+        gap: 24px;
+      }
+
+      .hero h2 {
+        margin: 0;
+        max-width: 760px;
+        font-size: clamp(32px, 5vw, 56px);
+        line-height: 1.05;
+        letter-spacing: 0;
+      }
+
+      .hero p {
+        margin: 0;
+        max-width: 680px;
+        color: #e8f2f7;
+        font-size: 17px;
+        line-height: 1.65;
+      }
+
+      .catalog-search {
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.96);
+        color: var(--ink);
+        padding: 16px;
+        display: grid;
+        grid-template-columns: 170px minmax(0, 1fr) 150px;
+        gap: 10px;
+        box-shadow: 0 18px 48px rgba(0, 0, 0, 0.22);
+      }
+
+      .catalog-search select,
+      .catalog-search input,
+      .catalog-search button {
+        min-height: 46px;
+        border-radius: 8px;
+        font: inherit;
+      }
+
+      .catalog-search select,
+      .catalog-search input {
+        border: 1px solid #cfdbe3;
+        padding: 0 12px;
+        background: white;
+      }
+
+      .catalog-search button {
+        border: 0;
+        background: var(--green);
+        color: white;
+        font-weight: 900;
+      }
+
+      main {
+        width: min(1180px, 100%);
+        margin: 0 auto;
+        padding: 26px clamp(16px, 4vw, 38px) 70px;
+        display: grid;
+        gap: 28px;
+      }
+
+      .quicklinks {
+        display: grid;
+        grid-template-columns: repeat(9, minmax(90px, 1fr));
+        gap: 10px;
+      }
+
+      .quicklink {
+        min-height: 76px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--surface);
+        color: var(--blue);
+        display: grid;
+        place-items: center;
+        text-align: center;
+        padding: 10px;
+        font-weight: 800;
+        box-shadow: 0 8px 24px rgba(18, 57, 91, 0.08);
+      }
+
+      .section-title {
+        margin: 0 0 14px;
+        color: var(--blue);
+        font-size: 24px;
+      }
+
+      .resource-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      .resource-card,
+      .notice-card {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--surface);
+        padding: 18px;
+        box-shadow: 0 10px 28px rgba(18, 57, 91, 0.08);
+      }
+
+      .resource-card span {
+        color: var(--gold);
+        font-size: 13px;
+        font-weight: 900;
+        text-transform: uppercase;
+      }
+
+      .resource-card h3,
+      .notice-card h3 {
+        margin: 8px 0;
+        color: var(--blue);
+        font-size: 18px;
+      }
+
+      .resource-card p,
+      .notice-card p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+
+      .services {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      .service-card {
+        min-height: 150px;
+        border-radius: 10px;
+        padding: 18px;
+        background: var(--blue);
+        color: white;
+        display: grid;
+        align-content: end;
+      }
+
+      .service-card:nth-child(2) {
+        background: var(--green);
+      }
+
+      .service-card:nth-child(3) {
+        background: #455a64;
+      }
+
+      .service-card:nth-child(4) {
+        background: #7b5b24;
+      }
+
+      .service-card strong {
+        font-size: 18px;
+      }
+
+      .service-card p {
+        margin: 8px 0 0;
+        color: rgba(255, 255, 255, 0.82);
+        line-height: 1.5;
+      }
+
+      .demo-note {
+        border-left: 5px solid var(--green);
+      }
+
+      footer {
+        padding: 24px clamp(18px, 4vw, 48px);
+        background: var(--blue-dark);
+        color: #dcebf5;
+        display: flex;
+        justify-content: space-between;
+        gap: 18px;
+        flex-wrap: wrap;
+      }
+
+      @media (max-width: 960px) {
+        .catalog-search,
+        .resource-grid,
+        .services {
+          grid-template-columns: 1fr 1fr;
+        }
+
+        .quicklinks {
+          grid-template-columns: repeat(3, 1fr);
+        }
+
+        .navlinks {
+          display: none;
+        }
+      }
+
+      @media (max-width: 620px) {
+        .utility,
+        .navbar {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        .catalog-search,
+        .resource-grid,
+        .services,
+        .quicklinks {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="utility">
+      <span>librarian@iitgn.ac.in</span>
+      <span>Main Library, Block 13 | IIT Gandhinagar</span>
+    </div>
+
+    <header class="navbar">
+      <a class="brand" href="#">
+        <span class="brand-mark">IIT</span>
+        <span>
+          <h1>IIT Gandhinagar Library</h1>
+          <p>Knowledge resources, research support, and user services</p>
+        </span>
+      </a>
+      <nav class="navlinks" aria-label="Primary">
+        <a>Home</a>
+        <a>About</a>
+        <a>Resources</a>
+        <a>Services</a>
+        <a>Research Support</a>
+        <a>Helpdesk</a>
+      </nav>
+    </header>
+
+    <section class="hero">
+      <div class="hero-inner">
+        <div>
+          <h2>Library services, resources, and research help</h2>
+          <p>
+            Search the catalogue, explore digital resources, access repository publications,
+            and get help from GyanAI when library staff are not immediately available.
+          </p>
+        </div>
+        <form class="catalog-search">
+          <select aria-label="Search field">
+            <option>Title</option>
+            <option>Author</option>
+            <option>Subject</option>
+            <option>ISBN</option>
+            <option>Call number</option>
+          </select>
+          <input aria-label="Catalogue query" placeholder="Type search term" />
+          <button type="button">Search</button>
+        </form>
+      </div>
+    </section>
+
+    <main>
+      <section class="quicklinks" aria-label="Quick links">
+        <a class="quicklink">Opening Hours</a>
+        <a class="quicklink">Membership</a>
+        <a class="quicklink">ILL</a>
+        <a class="quicklink">DDS</a>
+        <a class="quicklink">Pathfinders</a>
+        <a class="quicklink">Similarity Checking</a>
+        <a class="quicklink">Grammarly</a>
+        <a class="quicklink">Off-campus Access</a>
+        <a class="quicklink">FAQ</a>
+      </section>
+
+      <section>
+        <h2 class="section-title">Resources</h2>
+        <div class="resource-grid">
+          <article class="resource-card">
+            <span>Repository</span>
+            <h3>Digital Repository</h3>
+            <p>Discover IITGN research outputs, theses, papers, and institutional resources.</p>
+          </article>
+          <article class="resource-card">
+            <span>Publications</span>
+            <h3>IITGN Research Publications</h3>
+            <p>Browse publications by IITGN authors and connect users to repository records.</p>
+          </article>
+          <article class="resource-card">
+            <span>Digital</span>
+            <h3>Digital Resources</h3>
+            <p>Access e-journals, e-books, databases, standards, and subscribed resources.</p>
+          </article>
+          <article class="resource-card">
+            <span>Policy</span>
+            <h3>E-Resource Access Policy</h3>
+            <p>Understand permitted access, off-campus options, and responsible use rules.</p>
+          </article>
+        </div>
+      </section>
+
+      <section>
+        <h2 class="section-title">Library Services For</h2>
+        <div class="services">
+          <article class="service-card">
+            <strong>Students</strong>
+            <p>Borrowing, course readings, study spaces, FAQs, and quick service guidance.</p>
+          </article>
+          <article class="service-card">
+            <strong>Faculty</strong>
+            <p>Research support, publishing help, similarity checking, and resource requests.</p>
+          </article>
+          <article class="service-card">
+            <strong>Alumni</strong>
+            <p>Membership information and continued connection with library services.</p>
+          </article>
+          <article class="service-card">
+            <strong>Staff</strong>
+            <p>Access support, Grammarly, Turnitin, printing, scanning, and service help.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="notice-card demo-note">
+        <h3>GyanAI floating widget demo</h3>
+        <p>
+          The assistant button in the lower-right corner shows how GyanAI can appear on the
+          real library website after the web administrator adds the embed script. The chatbot
+          itself remains hosted separately and can be updated without changing the website.
+        </p>
+      </section>
+    </main>
+
+    <footer>
+      <span>Main Library, Block 13, IIT Gandhinagar</span>
+      <span>librarian@iitgn.ac.in | +91-079-2395-1126</span>
+    </footer>
+
+    <script src="/static/widget.js" data-chat-url="/"></script>
+  </body>
+</html>

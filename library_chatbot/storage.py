@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from contextlib import closing
 from pathlib import Path
 import sqlite3
 import threading
@@ -39,7 +40,7 @@ class ChatStorage:
         return connection
 
     def _initialize(self) -> None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS chat_messages (
@@ -62,9 +63,10 @@ class ChatStorage:
                 );
                 """
             )
+            connection.commit()
 
     def log_message(self, message: StoredMessage) -> None:
-        with self._lock, self._connect() as connection:
+        with self._lock, closing(self._connect()) as connection:
             connection.execute(
                 """
                 INSERT INTO chat_messages (
@@ -80,9 +82,10 @@ class ChatStorage:
                     message.confidence,
                 ),
             )
+            connection.commit()
 
     def log_feedback(self, session_id: str, helpful: bool, comment: str) -> None:
-        with self._lock, self._connect() as connection:
+        with self._lock, closing(self._connect()) as connection:
             connection.execute(
                 """
                 INSERT INTO feedback (session_id, helpful, comment)
@@ -90,9 +93,10 @@ class ChatStorage:
                 """,
                 (session_id, int(helpful), comment.strip()),
             )
+            connection.commit()
 
     def recent_messages(self, session_id: str, limit: int = 4) -> list[ChatTurn]:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             rows = connection.execute(
                 """
                 SELECT user_message, assistant_message, source_url, response_mode, confidence
@@ -118,7 +122,7 @@ class ChatStorage:
         return turns
 
     def stats(self) -> dict[str, Any]:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             chats = connection.execute("SELECT COUNT(*) AS count FROM chat_messages").fetchone()
             feedback = connection.execute("SELECT COUNT(*) AS count FROM feedback").fetchone()
         return {

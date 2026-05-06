@@ -15,6 +15,19 @@ const SOURCE_LABELS = {
   catalog: "Catalog",
   ejournal: "E-journal",
   repository_publication: "Repository",
+  live_catalog: "Live catalog",
+  library_website: "Library site",
+};
+
+const MODE_LABELS = {
+  llm: "Grounded LLM",
+  retrieval: "Retrieved",
+  contextual_retrieval: "Contextual",
+  low_confidence_source: "Verify source",
+  fallback: "Redirect",
+  catalog_redirect: "Catalog",
+  live_catalog: "Live catalog",
+  rule: "Ready",
 };
 
 function formatSourceMeta(source) {
@@ -127,7 +140,7 @@ async function sendMessage(message) {
     const data = await response.json();
     sessionId = data.session_id;
     window.localStorage.setItem("iitgn-library-session", sessionId);
-    modeIndicator.textContent = data.response_mode === "llm" ? "Grounded LLM" : "Retrieved";
+    modeIndicator.textContent = MODE_LABELS[data.response_mode] || "Retrieved";
 
     appendMessage({
       role: "assistant",

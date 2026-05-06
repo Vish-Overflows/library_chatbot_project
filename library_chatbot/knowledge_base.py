@@ -17,6 +17,8 @@ CATALOG_SOURCE = "catalog"
 EJOURNAL_SOURCE = "ejournal"
 FAQ_SOURCE = "faq"
 REPOSITORY_SOURCE = "repository_publication"
+WEBPAGE_SOURCE = "library_website"
+HIGH_PRECISION_METADATA_FIELDS = {"isbn", "issn", "doi", "call_number"}
 CATALOG_COLUMN_ALIASES = {
     "title": ("title", "book_title", "name", "publication_title", "dc_title"),
     "authors": ("author", "authors", "creator", "contributors", "dc_contributor_author"),
@@ -47,6 +49,7 @@ CATALOG_COLUMN_ALIASES = {
     "coverage": ("coverage", "coverage_y", "coverage_depth", "coverage_notes"),
     "date": ("date", "date_first_issue_online", "dc_date_issued", "dc_date_available"),
     "doi": ("doi", "dc_identifier_doi"),
+    "source_type": ("source_type", "record_kind"),
 }
 
 TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
@@ -89,6 +92,7 @@ STOPWORDS = {
     "how",
     "i",
     "in",
+    "inside",
     "is",
     "it",
     "library",
@@ -99,6 +103,7 @@ STOPWORDS = {
     "on",
     "or",
     "our",
+    "someone",
     "the",
     "their",
     "to",
@@ -198,6 +203,10 @@ class KnowledgeBase:
         self.documents = documents
         self.entries = documents
         self._token_index = self._build_token_index(documents)
+        self._document_frequency = {
+            token: len(document_indices)
+            for token, document_indices in self._token_index.items()
+        }
 
     @classmethod
     def from_csv(cls, csv_path: str | Path) -> "KnowledgeBase":
@@ -329,9 +338,24 @@ class KnowledgeBase:
             document = self.documents[index]
             title_score = cosine_similarity(query_tokens, document.title_tokens)
             body_score = cosine_similarity(query_tokens, document.body_tokens)
-            score = (0.65 * title_score) + (0.35 * body_score)
+            title_coverage = _weighted_token_coverage(query_tokens, document.title_tokens, self._document_frequency)
+            body_coverage = _weighted_token_coverage(query_tokens, document.body_tokens, self._document_frequency)
+            metadata_score = _metadata_match_score(normalized_query, query_tokens, document.metadata, self._document_frequency)
+            score = (
+                (0.42 * title_score)
+                + (0.18 * body_score)
+                + (0.22 * title_coverage)
+                + (0.08 * body_coverage)
+                + (0.10 * metadata_score)
+            )
             if document.source_type == FAQ_SOURCE:
-                score = (0.8 * title_score) + (0.2 * body_score)
+                score = (
+                    (0.52 * title_score)
+                    + (0.12 * body_score)
+                    + (0.26 * title_coverage)
+                    + (0.04 * body_coverage)
+                    + (0.06 * metadata_score)
+                )
 
             normalized_title = normalize_text(document.title)
             if normalized_query == normalized_title:
@@ -346,6 +370,8 @@ class KnowledgeBase:
                 score = max(score, 0.92)
             elif _exact_metadata_match(normalized_query, document.metadata):
                 score = max(score, 0.95)
+            elif _strong_title_match(query_tokens, document.title_tokens):
+                score = max(score, 0.78)
             score = min(1.0, score + _source_intent_boost(query_tokens, document.source_type))
             if score <= 0:
                 continue
@@ -469,6 +495,11 @@ def _catalog_document_from_row(
 
 
 def _detect_source_type(normalized: dict[str, str]) -> str:
+    explicit_source_type = normalized.get("source_type") or normalized.get("record_kind")
+    if explicit_source_type in {CATALOG_SOURCE, EJOURNAL_SOURCE, FAQ_SOURCE, REPOSITORY_SOURCE, WEBPAGE_SOURCE}:
+        return explicit_source_type
+    if normalized.get("resource_type") == "library_website" or normalized.get("dc_type") == "library_website":
+        return WEBPAGE_SOURCE
     if "publication_title" in normalized and (
         "title_url" in normalized
         or "provider_name" in normalized
@@ -567,8 +598,7 @@ def _column_index(cell_ref: str) -> int:
 def _exact_metadata_match(normalized_query: str, metadata: dict[str, str]) -> bool:
     if not normalized_query:
         return False
-    high_precision_fields = {"isbn", "issn", "doi", "call_number"}
-    for key in high_precision_fields:
+    for key in HIGH_PRECISION_METADATA_FIELDS:
         value = metadata.get(key, "")
         normalized_value = normalize_text(value)
         compact_query = re.sub(r"[^a-z0-9]+", "", normalized_query)
@@ -578,6 +608,60 @@ def _exact_metadata_match(normalized_query: str, metadata: dict[str, str]) -> bo
         if normalized_query and normalized_query == normalized_value:
             return True
     return False
+
+
+def _idf(token: str, document_frequency: dict[str, int]) -> float:
+    return 1.0 / math.sqrt(max(1, document_frequency.get(token, 1)))
+
+
+def _weighted_token_coverage(
+    query_tokens: Counter[str],
+    document_tokens: Counter[str],
+    document_frequency: dict[str, int],
+) -> float:
+    if not query_tokens or not document_tokens:
+        return 0.0
+    total_weight = sum(_idf(token, document_frequency) for token in query_tokens)
+    if total_weight <= 0:
+        return 0.0
+    matched_weight = sum(
+        _idf(token, document_frequency)
+        for token in query_tokens
+        if token in document_tokens
+    )
+    return matched_weight / total_weight
+
+
+def _metadata_match_score(
+    normalized_query: str,
+    query_tokens: Counter[str],
+    metadata: dict[str, str],
+    document_frequency: dict[str, int],
+) -> float:
+    if not query_tokens or not metadata:
+        return 0.0
+    if _exact_metadata_match(normalized_query, metadata):
+        return 1.0
+
+    weighted_scores: list[float] = []
+    for key, value in metadata.items():
+        if key == "title" or not value:
+            continue
+        field_tokens = Counter(tokenize(value))
+        if not field_tokens:
+            continue
+        score = _weighted_token_coverage(query_tokens, field_tokens, document_frequency)
+        if key in {"authors", "subject", "collection", "publisher"}:
+            score *= 1.12
+        weighted_scores.append(min(1.0, score))
+    return max(weighted_scores, default=0.0)
+
+
+def _strong_title_match(query_tokens: Counter[str], title_tokens: Counter[str]) -> bool:
+    if len(query_tokens) < 2 or len(title_tokens) < 2:
+        return False
+    overlap = set(query_tokens) & set(title_tokens)
+    return len(overlap) >= 2 and len(overlap) / max(1, len(title_tokens)) >= 0.75
 
 
 def _source_intent_boost(query_tokens: Counter[str], source_type: str) -> float:
@@ -626,6 +710,30 @@ def _source_intent_boost(query_tokens: Counter[str], source_type: str) -> float:
             "wifi",
         }
         return 0.04 if set(query_tokens) & intent_tokens else 0.0
+    if source_type == WEBPAGE_SOURCE:
+        intent_tokens = {
+            "access",
+            "article",
+            "contact",
+            "dds",
+            "email",
+            "eresource",
+            "grammarly",
+            "hours",
+            "ill",
+            "off",
+            "policy",
+            "purchase",
+            "remote",
+            "remotexs",
+            "research",
+            "rules",
+            "service",
+            "services",
+            "turnitin",
+            "vpn",
+        }
+        return 0.06 if set(query_tokens) & intent_tokens else 0.0
     return 0.0
 
 

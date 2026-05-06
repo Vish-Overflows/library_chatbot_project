@@ -10,6 +10,16 @@ def _split_csv_env(name: str, default: str = "") -> list[str]:
     return [item.strip() for item in raw_value.split(",") if item.strip()]
 
 
+def _catalog_paths(root_dir: Path) -> list[Path]:
+    paths = [Path(path) for path in _split_csv_env("CATALOG_PATHS", "")]
+    website_knowledge_path = Path(
+        os.getenv("WEBSITE_KNOWLEDGE_PATH", root_dir / "data" / "library_website_knowledge.csv")
+    )
+    if website_knowledge_path.exists() and website_knowledge_path not in paths:
+        paths.append(website_knowledge_path)
+    return paths
+
+
 @dataclass(frozen=True)
 class Settings:
     app_name: str
@@ -21,6 +31,9 @@ class Settings:
     llm_model: str
     llm_api_url: str
     request_timeout_seconds: float
+    catalog_base_url: str
+    catalog_timeout_seconds: float
+    catalog_live_search_enabled: bool
     top_k: int
     similarity_threshold: float
     conversation_history_limit: int
@@ -32,7 +45,7 @@ def get_settings() -> Settings:
     return Settings(
         app_name=os.getenv("APP_NAME", "IITGN Library Chatbot"),
         faq_path=Path(os.getenv("FAQ_PATH", root_dir / "FAQs.csv")),
-        catalog_paths=[Path(path) for path in _split_csv_env("CATALOG_PATHS", "")],
+        catalog_paths=_catalog_paths(root_dir),
         database_path=Path(os.getenv("DATABASE_PATH", root_dir / "instance" / "chatbot.db")),
         static_dir=Path(os.getenv("STATIC_DIR", root_dir / "static")),
         llm_api_key=os.getenv("LLM_API_KEY") or os.getenv("XAI_API_KEY") or os.getenv("GROQ_API_KEY"),
@@ -48,6 +61,10 @@ def get_settings() -> Settings:
             ),
         ),
         request_timeout_seconds=float(os.getenv("REQUEST_TIMEOUT_SECONDS", "20")),
+        catalog_base_url=os.getenv("CATALOG_BASE_URL", "https://catalog.iitgn.ac.in"),
+        catalog_timeout_seconds=float(os.getenv("CATALOG_TIMEOUT_SECONDS", "8")),
+        catalog_live_search_enabled=os.getenv("CATALOG_LIVE_SEARCH_ENABLED", "true").lower()
+        not in {"0", "false", "no", "off"},
         top_k=max(1, int(os.getenv("TOP_K", "4"))),
         similarity_threshold=float(os.getenv("SIMILARITY_THRESHOLD", "0.18")),
         conversation_history_limit=max(1, int(os.getenv("CONVERSATION_HISTORY_LIMIT", "4"))),

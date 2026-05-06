@@ -46,11 +46,15 @@ Copy `.env.example` to `.env` and update values as needed.
 
 - `FAQ_PATH`: path to the knowledge base CSV.
 - `CATALOG_PATHS`: optional comma-separated paths to catalog/resource metadata CSV or XLSX files.
+- `WEBSITE_KNOWLEDGE_PATH`: curated library website/service knowledge CSV, defaulting to `data/library_website_knowledge.csv`.
 - `DATABASE_PATH`: SQLite database location.
 - `ALLOWED_ORIGINS`: comma-separated CORS origins for website integration.
 - `LLM_API_KEY`: optional, enables LLM-generated answers.
 - `LLM_MODEL`: configurable model name.
 - `LLM_API_URL`: OpenAI-compatible chat completions endpoint. The default points to Groq.
+- `CATALOG_LIVE_SEARCH_ENABLED`: enables live Koha catalogue lookup for book/title availability questions.
+- `CATALOG_BASE_URL`: Koha catalogue base URL. Defaults to `https://catalog.iitgn.ac.in`.
+- `CATALOG_TIMEOUT_SECONDS`: timeout for live catalogue requests.
 - `GROQ_API_KEY`, `GROQ_MODEL`, and `GROQ_API_URL`: backwards-compatible aliases.
 
 ## Website integration options
@@ -60,6 +64,9 @@ Copy `.env.example` to `.env` and update values as needed.
 Deploy this app on its own domain or subdomain, for example:
 
 - `https://chat.library.iitgn.ac.in`
+
+This is the recommended first production step. The chatbot can be tested,
+updated, and monitored independently before the library website embeds it.
 
 ### Option 2: Embed inside the library website
 
@@ -72,6 +79,24 @@ Embed the standalone UI with an iframe:
   style="width:100%;height:720px;border:0;border-radius:16px;"
 ></iframe>
 ```
+
+For a floating website widget, the library web administrator can add this
+single script near the end of the site template, just before `</body>`:
+
+```html
+<script
+  src="https://chat.library.iitgn.ac.in/static/widget.js"
+  data-chat-url="https://chat.library.iitgn.ac.in/"
+></script>
+```
+
+Until the live website team grants access, test the same integration locally:
+
+```bash
+uvicorn server:app --reload
+```
+
+Open `http://127.0.0.1:8000/widget-demo`.
 
 ### Option 3: Use only the API
 
@@ -91,6 +116,26 @@ curl -X POST http://127.0.0.1:8000/api/chat \
   -d '{"message":"What are the library hours?"}'
 ```
 
+## Live catalogue lookup
+
+The chatbot can optionally query the public Koha catalogue for book/title
+availability questions such as:
+
+- `is Sipser in the library?`
+- `do you have Introduction to Algorithms?`
+- `find books by Cormen`
+
+This is not browser automation. The backend calls Koha search URLs, parses
+public catalogue/detail pages, and returns structured results with catalogue
+links. If the match is weak or the catalogue cannot be reached, the chatbot
+redirects the user to the exact catalogue search page instead of guessing.
+
+For a more robust production integration, ask the library/IT team whether Koha
+REST API, SRU, Z39.50, or regular MARC/CSV exports are available.
+The current public catalogue may show bot-check pages to automated HTTP
+clients, so API access, SRU, exports, or server allowlisting is the clean
+production path for reliable live availability lookup.
+
 ## Metadata ingestion
 
 The production backend uses one internal document model for both FAQs and catalog records. This keeps sample data replaceable: update `CATALOG_PATHS` when the real export arrives instead of changing chatbot logic.
@@ -99,12 +144,14 @@ The current configured metadata files are:
 
 - `data/ejournals_2026-04-20.xlsx`: e-journal/e-resource access records, including title, ISSN, provider, collection, URL, active status, subject, and coverage.
 - `data/iitgn_publications_2026-04-24.csv`: IITGN repository/publication records, including title, author, DOI, repository URL, type, subject, publisher, date, and department/collection.
+- `data/library_website_knowledge.csv`: curated service and navigation facts from the library website, including contacts, hours, off-campus access, ILL, DDS, purchase suggestions, e-resource policy, and research support.
 
 Loaded records are typed as:
 
 - `faq`: library policy and FAQ answers.
 - `ejournal`: journal/e-resource access and coverage metadata.
 - `repository_publication`: IITGN publications, theses, articles, conference papers, patents, and repository items.
+- `library_website`: library website/service pages for front-desk style routing and user guidance.
 - `catalog`: generic catalog/resource rows if another metadata export is added later.
 
 Catalog CSVs may use common column names such as:
