@@ -40,6 +40,8 @@ Or use the helper script:
 ./start_demo.sh
 ```
 
+For installation on a library/server machine, see [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md).
+
 ## Configuration
 
 Copy `.env.example` to `.env` and update values as needed.
@@ -178,6 +180,24 @@ python3 -m library_chatbot.ingest \
 ```
 
 The validator prints detected headers, recognized fields, usable record count, skipped rows, source type counts, and sample parsed records.
+
+For routine updates, use:
+
+```bash
+scripts/update_knowledge.sh \
+  --catalog /path/to/new_ejournals.xlsx \
+  --catalog /path/to/new_publications.csv
+```
+
+To update FAQs as well:
+
+```bash
+scripts/update_knowledge.sh \
+  --faq /path/to/FAQs.csv \
+  --catalog /path/to/new_ejournals.xlsx
+```
+
+The script copies new resource files into `data/imports/`, validates them, and prints the `.env` values to use. Restart the chatbot service after a successful update.
 
 ## Tests
 
