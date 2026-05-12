@@ -318,6 +318,18 @@ class ChatServiceTests(unittest.TestCase):
         self.assertEqual(result.sources[0].source_type, "live_catalog")
         self.assertEqual(fake_catalog.queries, ["sipser"])
 
+    def test_live_catalog_query_removes_conversational_fillers(self) -> None:
+        catalog_result = CatalogSearchResult(
+            query="sipser",
+            search_url="https://catalog.iitgn.ac.in/cgi-bin/koha/opac-search.pl?q=sipser",
+            records=[],
+        )
+        fake_catalog = FakeCatalogClient(catalog_result)
+        self.service.catalog_client = fake_catalog
+        result = self.service.answer("can I find sipser in library")
+        self.assertEqual(result.response_mode, "catalog_redirect")
+        self.assertEqual(fake_catalog.queries, ["sipser"])
+
     def test_live_catalog_uncertain_result_redirects_to_catalog_search(self) -> None:
         catalog_result = CatalogSearchResult(
             query="spaceship manual",

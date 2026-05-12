@@ -128,9 +128,12 @@ CATALOG_QUERY_STOPWORDS = {
     "books",
     "catalog",
     "catalogue",
+    "can",
+    "could",
     "do",
     "find",
     "have",
+    "i",
     "in",
     "is",
     "library",
@@ -138,6 +141,7 @@ CATALOG_QUERY_STOPWORDS = {
     "please",
     "the",
     "there",
+    "would",
     "you",
 }
 
