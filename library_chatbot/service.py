@@ -36,6 +36,10 @@ LIBRARY_REDIRECTS = {
 GENERATION_CONFIDENCE_MINIMUM = 0.30
 SOURCE_REDIRECT_MINIMUM = 0.28
 CITATION_CONFIDENCE_MINIMUM = 0.28
+SERVICE_SOURCE_TYPES = frozenset({"library_website", "faq"})
+EJOURNAL_SOURCE_TYPES = frozenset({"library_website", "faq", "ejournal"})
+REPOSITORY_SOURCE_TYPES = frozenset({"repository_publication"})
+CATALOG_SOURCE_TYPES = frozenset({"catalog"})
 FOLLOW_UP_HINTS = {
     "also",
     "and",
@@ -70,6 +74,30 @@ HOURS_INTENT_PATTERN = re.compile(
     r"\b("
     r"hours?|timings?|opening|closing|open|close|semester|vacation|24x7|24/7"
     r")\b",
+    re.IGNORECASE,
+)
+CONTACT_INTENT_PATTERN = re.compile(
+    r"\b(contact|email|phone|number|staff|librarian|circulation|acquisition|services team)\b",
+    re.IGNORECASE,
+)
+OFF_CAMPUS_INTENT_PATTERN = re.compile(
+    r"\b(off[- ]campus|remote|remotexs|vpn|outside campus|from home)\b",
+    re.IGNORECASE,
+)
+ILL_DDS_INTENT_PATTERN = re.compile(
+    r"\b(article copy|document delivery|dds|ill|inter library|interlibrary|not available|unavailable article)\b",
+    re.IGNORECASE,
+)
+EJOURNAL_INTENT_PATTERN = re.compile(
+    r"\b(e[- ]?journal|journal|e[- ]?resource|database|subscription|coverage|publisher|provider|onos|access to|do you have access)\b",
+    re.IGNORECASE,
+)
+REPOSITORY_INTENT_PATTERN = re.compile(
+    r"\b(repository|publication|publications|thesis|theses|doi|research paper|conference paper|patent|author)\b",
+    re.IGNORECASE,
+)
+RULES_INTENT_PATTERN = re.compile(
+    r"\b(rule|rules|policy|policies|food|eat|drink|silence|phone|smoking|fine|fee|overdue)\b",
     re.IGNORECASE,
 )
 SERVICE_INTENT_PATTERN = re.compile(
@@ -134,6 +162,17 @@ class ChatResult:
     confidence: float
 
 
+@dataclass(frozen=True)
+class QueryRoute:
+    intent: str
+    allowed_source_types: frozenset[str]
+    redirect_key: str
+    generation_minimum: float = GENERATION_CONFIDENCE_MINIMUM
+    source_minimum: float = SOURCE_REDIRECT_MINIMUM
+    similarity_minimum: float | None = None
+    policy: str = ""
+
+
 class ChatService:
     def __init__(
         self,
@@ -176,29 +215,31 @@ class ChatService:
 
         contextual_query = self._rewrite_with_context(clean_message, recent_turns)
         used_conversation_context = contextual_query != clean_message
-        effective_query = self._expand_query(contextual_query)
+        route = self._route_query(clean_message, contextual_query)
+        effective_query = self._expand_query(contextual_query, route)
 
-        if self._should_search_live_catalog(clean_message):
+        if route.intent == "CATALOG_AVAILABILITY" and self._should_search_live_catalog(clean_message):
             catalog_result = self._answer_from_live_catalog(clean_message, session)
             if catalog_result is not None:
                 return catalog_result
 
-        search_limit = max(self.top_k, 6)
+        search_limit = max(self.top_k * 4, 12)
         search_results = self.knowledge_base.search(effective_query, limit=search_limit)
-        search_results = self._filter_results_for_intent(clean_message, effective_query, search_results)
-        if not search_results or search_results[0].score < self.similarity_threshold:
+        search_results = self._filter_results_for_route(route, search_results)
+        similarity_minimum = route.similarity_minimum or self.similarity_threshold
+        if not search_results or search_results[0].score < similarity_minimum:
             if effective_query != clean_message:
                 direct_results = self.knowledge_base.search(clean_message, limit=self.top_k)
-                direct_results = self._filter_results_for_intent(clean_message, clean_message, direct_results)
+                direct_results = self._filter_results_for_route(route, direct_results)
                 if direct_results and direct_results[0].score > (search_results[0].score if search_results else 0.0):
                     search_results = direct_results
                     effective_query = clean_message
 
             result = ChatResult(
                 session_id=session,
-                answer=self._fallback_answer(clean_message, search_results),
-                source_url=self._redirect_url(clean_message, search_results),
-                sources=self._source_citations(self._reliable_sources(search_results)),
+                answer=self._fallback_answer(clean_message, search_results, route),
+                source_url=self._redirect_url(clean_message, search_results, route),
+                sources=self._source_citations(self._reliable_sources(search_results, route.source_minimum)),
                 related_questions=self.knowledge_base.related_questions(effective_query, limit=3),
                 response_mode="fallback",
                 confidence=search_results[0].score if search_results else 0.0,
@@ -207,12 +248,12 @@ class ChatService:
             return result
 
         top_result = search_results[0]
-        if top_result.score < SOURCE_REDIRECT_MINIMUM:
+        if top_result.score < route.source_minimum:
             result = ChatResult(
                 session_id=session,
-                answer=self._fallback_answer(clean_message, search_results),
-                source_url=self._redirect_url(clean_message, search_results),
-                sources=self._source_citations(self._reliable_sources(search_results)),
+                answer=self._fallback_answer(clean_message, search_results, route),
+                source_url=self._redirect_url(clean_message, search_results, route),
+                sources=self._source_citations(self._reliable_sources(search_results, route.source_minimum)),
                 related_questions=self.knowledge_base.related_questions(effective_query, limit=3),
                 response_mode="fallback",
                 confidence=top_result.score,
@@ -220,13 +261,14 @@ class ChatService:
             self._store(session, clean_message, result)
             return result
 
-        allow_generation = top_result.score >= GENERATION_CONFIDENCE_MINIMUM
+        allow_generation = top_result.score >= route.generation_minimum
         answer_text, response_mode = self._compose_answer(
             clean_message,
             effective_query,
             search_results,
             recent_turns,
             allow_generation=allow_generation,
+            route=route,
         )
         if used_conversation_context and response_mode == "retrieval":
             response_mode = "contextual_retrieval"
@@ -249,6 +291,7 @@ class ChatService:
         search_results: list[SearchResult],
         recent_turns: list[ChatTurn],
         allow_generation: bool,
+        route: QueryRoute,
     ) -> tuple[str, str]:
         top_result = search_results[0]
         if self.llm_client is None or not allow_generation:
@@ -267,16 +310,17 @@ class ChatService:
                 question=message,
                 context_blocks=context_blocks,
                 conversation_history=conversation_history,
+                answer_policy=self._route_answer_policy(route),
             )
             return llm_answer.text, "llm"
         except RuntimeError:
             return top_result.answer, "retrieval"
 
-    def _fallback_answer(self, message: str, search_results: list[SearchResult]) -> str:
-        redirect_url = self._redirect_url(message, search_results)
+    def _fallback_answer(self, message: str, search_results: list[SearchResult], route: QueryRoute) -> str:
+        redirect_url = self._redirect_url(message, search_results, route)
         contact = self._contact_for_message(message)
         nearby = ""
-        reliable_sources = self._reliable_sources(search_results)
+        reliable_sources = self._reliable_sources(search_results, route.source_minimum)
         if reliable_sources:
             nearby_titles = ", ".join(result.title for result in reliable_sources[:3])
             nearby = f"\n\nClosest related library sources I found: {nearby_titles}."
@@ -296,9 +340,17 @@ class ChatService:
             f"Source: {source_url}"
         )
 
-    def _redirect_url(self, message: str, search_results: list[SearchResult]) -> str:
-        if search_results and search_results[0].score >= SOURCE_REDIRECT_MINIMUM and search_results[0].source:
+    def _redirect_url(
+        self,
+        message: str,
+        search_results: list[SearchResult],
+        route: QueryRoute | None = None,
+    ) -> str:
+        source_minimum = route.source_minimum if route else SOURCE_REDIRECT_MINIMUM
+        if search_results and search_results[0].score >= source_minimum and search_results[0].source:
             return search_results[0].source
+        if route:
+            return LIBRARY_REDIRECTS[route.redirect_key]
 
         lowered = message.lower()
         if any(token in lowered for token in ("catalog", "book", "isbn", "borrow", "available", "availability")):
@@ -524,11 +576,15 @@ class ChatService:
             )
         return citations
 
-    def _reliable_sources(self, search_results: list[SearchResult]) -> list[SearchResult]:
+    def _reliable_sources(
+        self,
+        search_results: list[SearchResult],
+        minimum: float = SOURCE_REDIRECT_MINIMUM,
+    ) -> list[SearchResult]:
         return [
             result
             for result in search_results
-            if result.score >= SOURCE_REDIRECT_MINIMUM
+            if result.score >= minimum
         ]
 
     def _source_citations(self, search_results: list[SearchResult]) -> list[SourceCitation]:
@@ -584,34 +640,141 @@ class ChatService:
             return self._source_citations(filtered)
         return self._source_citations(search_results)
 
-    def _filter_results_for_intent(
+    def _filter_results_for_route(
         self,
-        message: str,
-        effective_query: str,
+        route: QueryRoute,
         search_results: list[SearchResult],
     ) -> list[SearchResult]:
         if not search_results:
             return search_results
 
-        if self._is_library_service_or_policy_query(message, effective_query):
-            trusted_results = [
-                result
-                for result in search_results
-                if result.source_type in {"library_website", "faq"}
-            ]
-            return trusted_results
+        if not route.allowed_source_types:
+            return search_results
 
-        return search_results
+        return [
+            result
+            for result in search_results
+            if result.source_type in route.allowed_source_types
+        ]
 
-    def _is_library_service_or_policy_query(self, message: str, effective_query: str) -> bool:
-        combined = f"{message} {effective_query}"
+    def _route_query(self, message: str, contextual_query: str) -> QueryRoute:
+        combined = f"{message} {contextual_query}"
+        lowered = combined.lower()
+
+        if ILL_DDS_INTENT_PATTERN.search(combined):
+            return QueryRoute(
+                intent="SERVICE_ILL_DDS",
+                allowed_source_types=SERVICE_SOURCE_TYPES,
+                redirect_key="ill",
+                policy="Answer as a library service question about ILL/DDS/article help. Do not use e-journal or repository records as proof of service policy.",
+            )
+        if OFF_CAMPUS_INTENT_PATTERN.search(combined):
+            return QueryRoute(
+                intent="SERVICE_OFF_CAMPUS",
+                allowed_source_types=SERVICE_SOURCE_TYPES,
+                redirect_key="off_campus",
+                policy="Answer using off-campus access and RemoteXS/VPN evidence only.",
+            )
         if HOURS_INTENT_PATTERN.search(combined):
+            return QueryRoute(
+                intent="SERVICE_HOURS",
+                allowed_source_types=SERVICE_SOURCE_TYPES,
+                redirect_key="faq",
+                policy="Answer library hours/timings only from FAQ or library website evidence.",
+            )
+        if CONTACT_INTENT_PATTERN.search(combined):
+            return QueryRoute(
+                intent="SERVICE_CONTACT",
+                allowed_source_types=SERVICE_SOURCE_TYPES,
+                redirect_key="contact",
+                policy="Route the user to the most specific contact email or phone number in the evidence.",
+            )
+        if BORROWING_PATTERN.search(combined):
+            return QueryRoute(
+                intent="SERVICE_BORROWING",
+                allowed_source_types=SERVICE_SOURCE_TYPES,
+                redirect_key="faq",
+                policy="Answer borrowing/circulation questions only from FAQ or library website evidence.",
+            )
+        if RULES_INTENT_PATTERN.search(combined):
+            return QueryRoute(
+                intent="SERVICE_RULES",
+                allowed_source_types=SERVICE_SOURCE_TYPES,
+                redirect_key="faq",
+                generation_minimum=0.28,
+                policy="Answer rules/policy questions only from FAQ or library website evidence.",
+            )
+        if self._looks_like_repository_query(combined):
+            return QueryRoute(
+                intent="REPOSITORY_PUBLICATION",
+                allowed_source_types=REPOSITORY_SOURCE_TYPES,
+                redirect_key="repository_publication",
+                source_minimum=0.25,
+                policy="Answer as a repository/publication lookup. Include available publication metadata and repository URL.",
+            )
+        if self._looks_like_ejournal_query(combined):
+            return QueryRoute(
+                intent="EJOURNAL_ACCESS",
+                allowed_source_types=EJOURNAL_SOURCE_TYPES,
+                redirect_key="digital_resources",
+                policy="Answer as an e-journal/e-resource access question. Use e-journal metadata plus website/FAQ access guidance.",
+            )
+        if self._looks_like_catalog_query(message):
+            return QueryRoute(
+                intent="CATALOG_AVAILABILITY",
+                allowed_source_types=CATALOG_SOURCE_TYPES,
+                redirect_key="catalog",
+                policy="Answer as a catalog availability lookup. If live catalog evidence is unavailable, route to the catalog search.",
+            )
+        if "library" in lowered or SERVICE_INTENT_PATTERN.search(combined) or POLICY_INTENT_PATTERN.search(combined):
+            return QueryRoute(
+                intent="GENERAL_LIBRARY",
+                allowed_source_types=SERVICE_SOURCE_TYPES,
+                redirect_key="general",
+                generation_minimum=0.34,
+                policy="Answer as a general front-desk library question using only website and FAQ evidence.",
+            )
+        return QueryRoute(
+            intent="UNKNOWN",
+            allowed_source_types=SERVICE_SOURCE_TYPES,
+            redirect_key="general",
+            generation_minimum=0.45,
+            source_minimum=0.34,
+            policy="If the evidence does not clearly answer the user, give a cautious route to the official library source instead of guessing.",
+        )
+
+    def _looks_like_catalog_query(self, message: str) -> bool:
+        if re.search(r"\b(?:97[89][-\s]?)?\d[\d\s-]{8,}\d\b", message):
             return True
-        if SERVICE_INTENT_PATTERN.search(combined):
-            return True
-        if POLICY_INTENT_PATTERN.search(combined) and not CATALOG_INTENT_PATTERN.search(message):
-            return True
-        return False
+        if SERVICE_INTENT_PATTERN.search(message) or ILL_DDS_INTENT_PATTERN.search(message):
+            return False
+        if POLICY_INTENT_PATTERN.search(message) and not re.search(
+            r"\b(do you have|is .+ in the library|find|isbn|author|title|catalog|catalogue)\b",
+            message,
+            re.IGNORECASE,
+        ):
+            return False
+        return CATALOG_INTENT_PATTERN.search(message) is not None
+
+    def _looks_like_ejournal_query(self, message: str) -> bool:
+        if OFF_CAMPUS_INTENT_PATTERN.search(message) or ILL_DDS_INTENT_PATTERN.search(message):
+            return False
+        return EJOURNAL_INTENT_PATTERN.search(message) is not None
+
+    def _looks_like_repository_query(self, message: str) -> bool:
+        if ILL_DDS_INTENT_PATTERN.search(message):
+            return False
+        if re.search(r"\b(author|paper)\b", message, re.IGNORECASE) and CATALOG_INTENT_PATTERN.search(message):
+            return False
+        return REPOSITORY_INTENT_PATTERN.search(message) is not None
+
+    def _route_answer_policy(self, route: QueryRoute) -> str:
+        source_types = ", ".join(sorted(route.allowed_source_types)) or "all supplied evidence"
+        return (
+            f"Detected intent: {route.intent}\n"
+            f"Allowed evidence source types: {source_types}\n"
+            f"{route.policy}"
+        ).strip()
 
     def _format_context_block(self, result: SearchResult) -> str:
         source_label = {
@@ -642,6 +805,9 @@ class ChatService:
         stripped = message.strip()
         lowered = stripped.lower()
         message_words = lowered.split()
+        if self._has_standalone_intent(stripped):
+            return message
+
         is_short = len(message_words) <= 8
         starts_with_follow_up = message_words[:1] and message_words[0] in FOLLOW_UP_HINTS
         contains_reference = REFERENTIAL_PATTERN.search(stripped) is not None
@@ -653,9 +819,26 @@ class ChatService:
         previous_user_message = recent_turns[-1].user_message
         return f"{previous_user_message} {message}".strip()
 
-    def _expand_query(self, message: str) -> str:
+    def _has_standalone_intent(self, message: str) -> bool:
+        return any(
+            pattern.search(message)
+            for pattern in (
+                HOURS_INTENT_PATTERN,
+                PHONE_CALL_PATTERN,
+                BORROWING_PATTERN,
+                CONTACT_INTENT_PATTERN,
+                OFF_CAMPUS_INTENT_PATTERN,
+                ILL_DDS_INTENT_PATTERN,
+                EJOURNAL_INTENT_PATTERN,
+                REPOSITORY_INTENT_PATTERN,
+                RULES_INTENT_PATTERN,
+                CATALOG_INTENT_PATTERN,
+            )
+        ) or self._looks_like_catalog_query(message)
+
+    def _expand_query(self, message: str, route: QueryRoute) -> str:
         lowered = message.lower()
-        if HOURS_INTENT_PATTERN.search(message):
+        if route.intent == "SERVICE_HOURS":
             return (
                 f"{message} library hours timings opening closing Main Library hours "
                 "semester Monday Friday Saturday Sunday holidays vacation circulation "
@@ -663,12 +846,30 @@ class ChatService:
             )
         if "call number" not in lowered and PHONE_CALL_PATTERN.search(message):
             return f"{message} take phone calls phone quiet"
-        if BORROWING_PATTERN.search(message):
+        if route.intent == "SERVICE_BORROWING":
             return (
                 f"{message} borrow books loan record short loan renew RFID kiosk "
                 "circulation issue library borrowing policy"
             )
-        if SERVICE_INTENT_PATTERN.search(message):
+        if route.intent == "SERVICE_ILL_DDS":
+            return (
+                f"{message} document delivery service DDS inter library loan ILL article copy "
+                "unavailable bibliographic details libraryservices librarycirculation"
+            )
+        if route.intent == "SERVICE_OFF_CAMPUS":
+            return f"{message} off-campus access RemoteXS VPN e-resources IITGN email libraryservices"
+        if route.intent == "SERVICE_CONTACT":
+            return (
+                f"{message} library contact email phone circulation services acquisitions librarian "
+                "librarycirculation libraryservices libraryacquisitions"
+            )
+        if route.intent == "SERVICE_RULES":
+            return f"{message} library rules policy food drink phone silence ID card fine fee decorum"
+        if route.intent == "EJOURNAL_ACCESS":
+            return f"{message} e-journal journal e-resource database access subscription coverage provider collection active"
+        if route.intent == "REPOSITORY_PUBLICATION":
+            return f"{message} repository publication"
+        if route.intent in {"GENERAL_LIBRARY", "UNKNOWN"} and SERVICE_INTENT_PATTERN.search(message):
             if any(token in lowered for token in ("purchase", "recommend", "acquisition", "procurement")):
                 return (
                     f"{message} recommend resources purchase subscription books journals "

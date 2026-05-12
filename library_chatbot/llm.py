@@ -51,6 +51,7 @@ class OpenAICompatibleClient:
         question: str,
         context_blocks: list[str],
         conversation_history: list[tuple[str, str]] | None = None,
+        answer_policy: str = "",
     ) -> LLMAnswer:
         context_text = "\n\n".join(context_blocks)
         history_text = ""
@@ -72,6 +73,7 @@ class OpenAICompatibleClient:
                     "content": (
                         f"User question:\n{question}\n\n"
                         f"{history_text}\n\n"
+                        f"Answer policy:\n{answer_policy or 'Use the supplied evidence carefully.'}\n\n"
                         f"Library context:\n{context_text}\n\n"
                         "Write the best possible grounded chatbot answer from the evidence. "
                         "When helpful, cite source names or URLs already present in the evidence."
