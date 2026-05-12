@@ -66,6 +66,12 @@ FOLLOW_UP_HINTS = {
 REFERENTIAL_PATTERN = re.compile(r"\b(it|they|them|that|this|there|those|these|also)\b", re.IGNORECASE)
 PHONE_CALL_PATTERN = re.compile(r"\b(phone\s+call|call\s+someone|take\s+calls?|make\s+calls?|talk\s+on\s+phone)\b", re.IGNORECASE)
 BORROWING_PATTERN = re.compile(r"\b(borrow|borrowing|loan|loans|issue|issuing|renew|renewal|rfid)\b", re.IGNORECASE)
+HOURS_INTENT_PATTERN = re.compile(
+    r"\b("
+    r"hours?|timings?|opening|closing|open|close|semester|vacation|24x7|24/7"
+    r")\b",
+    re.IGNORECASE,
+)
 SERVICE_INTENT_PATTERN = re.compile(
     r"\b("
     r"service|services|help|contact|email|article copy|document delivery|dds|ill|inter library|"
@@ -179,9 +185,11 @@ class ChatService:
 
         search_limit = max(self.top_k, 6)
         search_results = self.knowledge_base.search(effective_query, limit=search_limit)
+        search_results = self._filter_results_for_intent(clean_message, effective_query, search_results)
         if not search_results or search_results[0].score < self.similarity_threshold:
             if effective_query != clean_message:
                 direct_results = self.knowledge_base.search(clean_message, limit=self.top_k)
+                direct_results = self._filter_results_for_intent(clean_message, clean_message, direct_results)
                 if direct_results and direct_results[0].score > (search_results[0].score if search_results else 0.0):
                     search_results = direct_results
                     effective_query = clean_message
@@ -576,6 +584,35 @@ class ChatService:
             return self._source_citations(filtered)
         return self._source_citations(search_results)
 
+    def _filter_results_for_intent(
+        self,
+        message: str,
+        effective_query: str,
+        search_results: list[SearchResult],
+    ) -> list[SearchResult]:
+        if not search_results:
+            return search_results
+
+        if self._is_library_service_or_policy_query(message, effective_query):
+            trusted_results = [
+                result
+                for result in search_results
+                if result.source_type in {"library_website", "faq"}
+            ]
+            return trusted_results
+
+        return search_results
+
+    def _is_library_service_or_policy_query(self, message: str, effective_query: str) -> bool:
+        combined = f"{message} {effective_query}"
+        if HOURS_INTENT_PATTERN.search(combined):
+            return True
+        if SERVICE_INTENT_PATTERN.search(combined):
+            return True
+        if POLICY_INTENT_PATTERN.search(combined) and not CATALOG_INTENT_PATTERN.search(message):
+            return True
+        return False
+
     def _format_context_block(self, result: SearchResult) -> str:
         source_label = {
             "faq": "IITGN Library FAQ/policy",
@@ -618,6 +655,12 @@ class ChatService:
 
     def _expand_query(self, message: str) -> str:
         lowered = message.lower()
+        if HOURS_INTENT_PATTERN.search(message):
+            return (
+                f"{message} library hours timings opening closing Main Library hours "
+                "semester Monday Friday Saturday Sunday holidays vacation circulation "
+                "Mini-Library 24x7 locations libhours"
+            )
         if "call number" not in lowered and PHONE_CALL_PATTERN.search(message):
             return f"{message} take phone calls phone quiet"
         if BORROWING_PATTERN.search(message):

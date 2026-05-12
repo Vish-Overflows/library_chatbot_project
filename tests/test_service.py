@@ -70,9 +70,49 @@ class ChatServiceTests(unittest.TestCase):
                 }
             )
 
+        website_path = temp_path / "website.csv"
+        with website_path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(
+                handle,
+                fieldnames=["title", "description", "source", "source_type", "subject"],
+            )
+            writer.writeheader()
+            writer.writerow(
+                {
+                    "title": "Library hours and locations",
+                    "description": (
+                        "Main Library hours during semester: Monday to Friday 9.00 a.m. "
+                        "to 2.00 a.m.; Saturday, Sunday, and holidays 9.00 a.m. to "
+                        "12.00 a.m. Mini-Library is open all days 24x7."
+                    ),
+                    "source": "https://library.iitgn.ac.in/libhours.php",
+                    "source_type": "library_website",
+                    "subject": "hours timing opening circulation location mini library main library",
+                }
+            )
+
+        repository_path = temp_path / "repository.csv"
+        with repository_path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(
+                handle,
+                fieldnames=["dc_title", "dc_identifier_uri", "dc_type", "dc_subject"],
+            )
+            writer.writeheader()
+            writer.writerow(
+                {
+                    "dc_title": "Some qualitative questions on the equation",
+                    "dc_identifier_uri": "https://repository.iitgn.ac.in/handle/IITG2025/21783",
+                    "dc_type": "Article",
+                    "dc_subject": "Mathematics",
+                }
+            )
+
         database_path = temp_path / "chatbot.db"
         self.service = ChatService(
-            knowledge_base=KnowledgeBase.from_sources(faq_path, [catalog_path]),
+            knowledge_base=KnowledgeBase.from_sources(
+                faq_path,
+                [catalog_path, website_path, repository_path],
+            ),
             storage=ChatStorage(database_path),
             similarity_threshold=0.2,
             top_k=4,
@@ -123,6 +163,13 @@ class ChatServiceTests(unittest.TestCase):
         self.assertEqual(result.response_mode, "fallback")
         self.assertEqual(result.source_url, "https://catalog.iitgn.ac.in/")
         self.assertIn("Relevant source", result.answer)
+
+    def test_library_timings_query_uses_hours_source_not_repository_noise(self) -> None:
+        result = self.service.answer("can u gimme library timings")
+        self.assertIn("Monday to Friday", result.answer)
+        self.assertEqual(result.source_url, "https://library.iitgn.ac.in/libhours.php")
+        self.assertTrue(result.sources)
+        self.assertTrue(all(source.source_type in {"faq", "library_website"} for source in result.sources))
 
     def test_live_catalog_search_answers_book_availability(self) -> None:
         catalog_result = CatalogSearchResult(

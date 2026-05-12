@@ -65,6 +65,7 @@ NORMALIZATION_MAP = {
     "loudly": "loud",
     "noisy": "noise",
     "quietly": "quiet",
+    "timings": "timing",
     "beverages": "drink",
     "drinks": "drink",
     "ebooks": "ebook",
